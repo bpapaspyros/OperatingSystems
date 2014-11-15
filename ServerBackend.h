@@ -35,7 +35,7 @@ typedef struct {
 	}
 
 	// parsing arguments
-	for(i=1; i<7; i+=2) {
+	for(i=1; i<argc; i+=2) {
 		if ( !strcmp(argv[i], "-p") && gotP == 0 ) {
 			s->players = atoi(argv[i+1]);
 			gotP = 1; 
@@ -50,11 +50,12 @@ typedef struct {
 		}
 	} // for
 
+	// checking if we got everything we need
 	if (gotP && gotQ && gotI) {
 		printf("\n\t Settings for this game: \n\n");
 		printf("\t Players: %d \n", s->players);
 		printf("\t Inventory per player: %d \n", s->quota);
-		printf("\t Using %s as inventory \n\n", s->inventory);
+		printf("\t Using %s as inventory file\n\n", s->inventory);
 	} else {
 		printf("Invalid or missing parameters. Exiting ... \n");
 		exit(1);

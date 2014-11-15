@@ -1,5 +1,5 @@
 /**
- * @file MpServer.c
+ * @file Server.c
  * @author Vaios Papaspyros
  * 
  * @brief Implemenation of the game's server
@@ -20,6 +20,8 @@ int main(int argc, char **argv) {
 
 	// getting parameters to set up the server according to the user
 	initSettings(argc, argv, &set);
+
+
 
 
 	return 0;
