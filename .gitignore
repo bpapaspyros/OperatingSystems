@@ -1,0 +1,3 @@
+*.o
+test_server
+test_client
