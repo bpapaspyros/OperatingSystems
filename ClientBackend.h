@@ -1,9 +1,8 @@
 #ifndef CLIENTBACKEND_H
 #define CLIENTBACKEND_H
 
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
+#include <stdlib.h>	// standard library e.g. exit function
+#include <string.h>	// string handling
 
 // Structs
 typedef struct {
@@ -21,7 +20,7 @@ typedef struct {
  * parameter array that was passed in to the main function
  */
  void initcSettings(int argc, char **argv, cSettings *s) {
-	int i;					// for counter
+	int i;	// for counter
 	
 	// flags we raise when we get the necessary parameters
 	int gotN = 0;

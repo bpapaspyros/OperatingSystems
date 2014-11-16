@@ -1,7 +1,5 @@
 CXX=gcc
 CXXFLAGS=-Wall -Wextra
-DEBUG=-g
-
 
 all: GameServer	GameClient
 
@@ -20,4 +18,4 @@ Client.o: Client.c ClientBackend.h
 .PHONY:	clean
 
 clean:
-	rm -f test *.o
+	rm -f test *.o	*.str test_client test_server
