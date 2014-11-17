@@ -10,21 +10,17 @@
  *
  */
 
-#include <stdio.h>		// standard i/o
-#include <unistd.h>		// declaration of numerous functions and macros
-#include <sys/socket.h> // socket definitions
-#include <sys/types.h> 	// system data types
-#include <sys/un.h> 	// Unix domain sockets
-#include <errno.h>		// EINTR variable
-#include <sys/wait.h>	// waitpid system call
-
+#include "SharedHeader.h"
 #include "ServerBackend.h"	// server backend, which handles the game
 
 // size for the queue
 #define LISTENQ 30
 
-// socket name and path
-#define SRV_PATH "./gameserver.str"
+
+
+
+// counter for the servers created
+ int counter = 0;
 
 // functions
 void catch_sig(int signo);	// signal handler for zombie processes
@@ -37,7 +33,6 @@ int main(int argc, char **argv) {
 	// getting parameters to set up the server according to the user
 	// initSettings(argc, argv, &set);
 
-	/*- ------------------- testing ------------------- */
 	int listenfd, connfd; // socket descriptors
 	char line;			  // used to output chars to stdout
 	pid_t childpid;		  // storing the child process pid
@@ -56,7 +51,7 @@ int main(int argc, char **argv) {
 	unlink(SRV_PATH);
 
 	// initializing connection variables
-	bzero(&servaddr, sizeof(servaddr) );	// zero servaddr fields
+	bzero(&servaddr, sizeof(servaddr));		// zero servaddr fields
 	servaddr.sun_family = AF_LOCAL; 		// setting the socket type to local
 	strcpy(servaddr.sun_path, SRV_PATH);    // defining the socket's name
 
@@ -66,6 +61,10 @@ int main(int argc, char **argv) {
 	// creating the request queue
 	listen(listenfd, LISTENQ); 
 
+/*- ------------------- testing ------------------- */
+	// Room* r = addRoom(&set);
+
+
 	// infinite loop, here we handle requests
 	for (;;) {
 		clilen = sizeof(cliaddr);	// got address length
@@ -74,35 +73,48 @@ int main(int argc, char **argv) {
 		connfd = accept(listenfd, (struct sockaddr *) &cliaddr, &clilen);
 
 		if (connfd < 0) {
-			if ( errno == EINTR ) /* Something interrupted us. */
-				continue;	/* Back to for()... */
+			if (errno == EINTR) // something interrupted us
+				continue;
 			else {
-				fprintf( stderr, "Accept Error\n" );
-				exit( 0 );
+				fprintf(stderr, "Got an error while trying to connect \n");
+				exit(1);
 			}
 		}
 
-		childpid = fork(); /* Spawn a child. */
+		// forking the process and creating a child
+		childpid = fork();
 
-		if ( childpid == 0 ) {	/* Child process. */
-			close( listenfd );	/* Close listening socket. */
-			while ( read( connfd, &line, sizeof( char ) ) > 0 )
-			putchar( line );
-			putchar( '\n' );
+		if (childpid == 0) {	// checking if it is the child process
+			close(listenfd);	// closing up the listening socket
+			
+			// if (read(connfd, &line, sizeof(char)) > 0) {
+				// if ()
+			// }
 
-			exit(0); /* Terminate child process. */
+			while(read(connfd, &line, sizeof(char)) > 0) {
+				putchar(line);
+			}
+
+			putchar('\n');
+
+			exit(1); 	// terminating the process
 		}
 
-		close(connfd);	/* Parent closes connected socket */
+		close(connfd);	// closing the connected socket
 	}
-	/*- ------------------- testing ------------------- */
+/*- ------------------- testing ------------------- */
 
 
 	return 0;
 }
 
 /*- ---------------------------------------------------------------- -*/
-
+/**
+ * @brief Handles the various signal codes
+ *
+ * @param Takes in the signal int code
+ *
+ */
 void catch_sig(int signo) {
 	pid_t pid;
 	int stat;

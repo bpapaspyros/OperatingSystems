@@ -11,6 +11,21 @@ typedef struct {
 	char inventory[16];
 }Settings;
 
+
+typedef struct {
+	int id;
+	char *players;
+	int slots;
+}Room;
+
+// Room* addRoom(Settings *s) {
+// 	int i = 0;
+// 	Room r;
+// 	r.slots = 1;
+
+// 	return r;
+// }
+
 /*- ---------------------------------------------------------------- -*/
 /**
  * @brief Initializes the the settings struct according

@@ -10,16 +10,10 @@
  *
  */
 
-#include <stdio.h>		// standard i/o
-#include <unistd.h>		// declaration of numerous functions and macros
-#include <sys/socket.h> // socket definitions
-#include <sys/types.h> 	// system data types
-#include <sys/un.h> 	// Unix domain sockets
-
+#include "SharedHeader.h"
 #include "ClientBackend.h"
 
 void makeHandshake(int s);
-
 
 int main(int argc, char **argv) {
 	cSettings set;					// player settings
@@ -35,10 +29,10 @@ int main(int argc, char **argv) {
 	sockfd = socket(AF_LOCAL, SOCK_STREAM, 0); // client endpoint
 	bzero(&servaddr, sizeof(servaddr)); 	   // zero servaddr fields
 	servaddr.sun_family = AF_LOCAL;			   // setting the socket type to local
-	strcpy(servaddr.sun_path, "./gameserver.str");    // define the name of this socket
+	strcpy(servaddr.sun_path, set.host_name);    // define the name of this socket
 
-	/*- ------------------- testing ------------------- */
 
+/*- ------------------- testing ------------------- */
 	// connect the client's and server's endpoints
 	connect(sockfd, (struct sockaddr *) &servaddr, sizeof(servaddr));
 
@@ -64,7 +58,7 @@ int main(int argc, char **argv) {
 	}
 
 	close(sockfd);
-	/*- ------------------- testing ------------------- */
+/*- ------------------- testing ------------------- */
 
 	return 0;
 }
