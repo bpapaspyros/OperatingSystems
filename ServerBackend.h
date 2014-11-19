@@ -1,30 +1,12 @@
 #ifndef SERVERBACKEND_H
 #define SERVERBACKEND_H
 
-#include <stdlib.h>	// standard library e.g. exit function
-#include <string.h>	// string handling
-
 // Structs
 typedef struct {
 	int players;
 	int quota;
 	char inventory[16];
 }Settings;
-
-
-typedef struct {
-	int id;
-	char *players;
-	int slots;
-}Room;
-
-// Room* addRoom(Settings *s) {
-// 	int i = 0;
-// 	Room r;
-// 	r.slots = 1;
-
-// 	return r;
-// }
 
 /*- ---------------------------------------------------------------- -*/
 /**

@@ -16,11 +16,8 @@
 // size for the queue
 #define LISTENQ 30
 
-
-
-
-// counter for the servers created
- int counter = 0;
+// keeping track of the rooms created
+int room_count = 0;
 
 // functions
 void catch_sig(int signo);	// signal handler for zombie processes
@@ -29,20 +26,29 @@ void catch_sig(int signo);	// signal handler for zombie processes
 
 int main(int argc, char **argv) {
 	Settings set;	// Game settings
+	Inventory inv;	// Game inventory as requested
 
 	// getting parameters to set up the server according to the user
-	// initSettings(argc, argv, &set);
+	initSettings(argc, argv, &set);
+
+	readInventory(set.inventory, &inv);
+
+	int b = 0;
+	for (b=0; b<inv.count; b++){
+		printf("----> %s \t %d\n", inv.items[b], inv.quantity[b]);
+	}
 
 	int listenfd, connfd; // socket descriptors
 	char line;			  // used to output chars to stdout
 	pid_t childpid;		  // storing the child process pid
 	socklen_t clilen;	  // client address length
 
+
 	// structs for client/server addresses
 	struct sockaddr_un cliaddr, servaddr; 
 
 	// handling signals to avoid zombie processes
-	signal(SIGCHLD, catch_sig); 
+	signal(SIGCHLD, catch_sig);
 
 	// server's endpoint
 	listenfd = socket(AF_LOCAL, SOCK_STREAM, 0); 
@@ -62,7 +68,6 @@ int main(int argc, char **argv) {
 	listen(listenfd, LISTENQ); 
 
 /*- ------------------- testing ------------------- */
-	// Room* r = addRoom(&set);
 
 
 	// infinite loop, here we handle requests
@@ -82,20 +87,22 @@ int main(int argc, char **argv) {
 		}
 
 		// forking the process and creating a child
+		printf("----> %d \n", ++room_count);
+
 		childpid = fork();
 
 		if (childpid == 0) {	// checking if it is the child process
 			close(listenfd);	// closing up the listening socket
-			
-			// if (read(connfd, &line, sizeof(char)) > 0) {
-				// if ()
-			// }
 
 			while(read(connfd, &line, sizeof(char)) > 0) {
 				putchar(line);
 			}
 
 			putchar('\n');
+
+
+			// ----> here we should check tha validity of our items
+			write(connfd, &room_count, sizeof(int));
 
 			exit(1); 	// terminating the process
 		}

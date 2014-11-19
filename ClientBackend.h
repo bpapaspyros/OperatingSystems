@@ -1,14 +1,12 @@
 #ifndef CLIENTBACKEND_H
 #define CLIENTBACKEND_H
 
-#include <stdlib.h>	// standard library e.g. exit function
-#include <string.h>	// string handling
-
 // Structs
 typedef struct {
 	char name[10];
 	char inventory[16];
 	char host_name[16];
+	int roomID;
 }cSettings;
 
 /*- ---------------------------------------------------------------- -*/
@@ -26,6 +24,10 @@ typedef struct {
 	int gotN = 0;
 	int gotI = 0;
 	int gotH = 0;
+
+	// setting roomID to invalid -1 so that we know we haven't
+	// assigned this player yet
+	s->roomID = -1;
 
 	// managing invalid parameter input
 	if (argc != 6) {
