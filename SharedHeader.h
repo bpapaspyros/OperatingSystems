@@ -7,10 +7,11 @@
 #include <sys/un.h> 	// Unix domain sockets
 #include <errno.h>		// EINTR variable
 #include <sys/wait.h>	// waitpid system call
-#include <sys/un.h> 	// Unix domain sockets
+#include <netinet/in.h>	// includes all the necessary protocols
+#include <netdb.h>		// definitions for network database operations
 
-// socket name and path
-#define SRV_PATH "./gameserver.str"
+// defining port number
+#define PORT_NO 55623
 
 
 // struct containing the inventory data
@@ -78,3 +79,17 @@ int readInventory(char *filename, Inventory *inv) {
 }
 
 	
+/**
+ * @brief Prints the info stored in a Inventory struvt
+ *
+ * @param Takes in an inventory struct
+ */
+void printInventory(Inventory *inv) {
+	int i = 0;	// for counter
+
+	// printing our data in the appropriate format
+	printf("Inventory: \n\n");
+	for (i=0; i<inv->count; i++){
+		printf("%s \t %d\n", inv->items[i], inv->quantity[i]);
+	}
+}

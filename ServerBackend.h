@@ -8,6 +8,11 @@ typedef struct {
 	char inventory[16];
 }Settings;
 
+typedef struct {
+	int room_count;
+	int slots;
+}GameStatus;
+
 /*- ---------------------------------------------------------------- -*/
 /**
  * @brief Initializes the the settings struct according
@@ -15,8 +20,9 @@ typedef struct {
  *
  * @param Takes in the number of parameters as well as the 
  * parameter array that was passed in to the main function
+ * plus the settings and game status structs
  */
- void initSettings(int argc, char **argv, Settings *s) {
+ void initSettings(int argc, char **argv, Settings *s, GameStatus *gs) {
 	int i;	// for counter
 	
 	// flags we raise when we get the necessary parameters
@@ -48,6 +54,11 @@ typedef struct {
 
 	// checking if we got everything we need
 	if (gotP && gotQ && gotI) {
+		// setting up the status 
+		gs->room_count = 1;
+		gs->slots = s->players;
+
+		// printing the settings that were read
 		printf("\n\t Settings for this game: \n\n");
 		printf("\t Players: %d \n", s->players);
 		printf("\t Inventory per player: %d \n", s->quota);

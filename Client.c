@@ -26,48 +26,55 @@ int main(int argc, char **argv) {
 	cSettings set;					// player settings
 
 	int sockfd;						// socket
-	struct sockaddr_un servaddr;	// struct for server address
+	struct sockaddr_in servaddr;	// struct for server address
+	struct hostent *server;
 	int pid;						// pid
 
 	// getting parameters to set up the server according to the user
 	initcSettings(argc, argv, &set);
 
 	// initializing connection variables
-	sockfd = socket(AF_LOCAL, SOCK_STREAM, 0); // client endpoint
+	server = gethostbyname(set.host_name);
+	if ( server == NULL ) {
+		fprintf(stderr, "Invalid hostname \n");
+		exit(1);
+	}
+
+	sockfd = socket(AF_INET, SOCK_STREAM, 0);  // client endpoint
+	if ( sockfd < 0 ) {
+		perror("Couldn't open socket");
+	}
+
 	bzero(&servaddr, sizeof(servaddr)); 	   // zero servaddr fields
-	servaddr.sun_family = AF_LOCAL;			   // setting the socket type to local
-	strcpy(servaddr.sun_path, SRV_PATH);  	   // define the name of this socket
+	bcopy((char *)server->h_addr, 
+         (char *)&servaddr.sin_addr.s_addr,
+         server->h_length);
+	servaddr.sin_family = AF_INET;			   // setting the socket type to local
+	servaddr.sin_port = htons(PORT_NO);
 
 
 /*- ------------------- testing ------------------- */
 	// connect the client's and server's endpoints
-	connect(sockfd, (struct sockaddr *) &servaddr, sizeof(servaddr));
+	if ( connect(sockfd, (struct sockaddr *) &servaddr, sizeof(servaddr)) < 0 ) {
+		perror("Couldn't connect");
+	}
 
 	int j = 0;
 	char send;
 	int getID;
+	char buf[20];
 
-	// printing player name so that we know he is connected
-	for (j=0; j<strlen(set.name); j++ ) {
+	write(sockfd, set.name, sizeof(set.name));
 
-		if (feof(stdin) ) {
-			break;
-		}
-
-		send = set.name[j];
-		write(sockfd, &send, sizeof(char));
-	}
-
-	send = '\n';
-	write(sockfd, &send, sizeof(char));
-
+	// close(sockfd);
+	// connect(sockfd, (struct sockaddr *) &servaddr, sizeof(servaddr));
 	// while( getchar() != '\n' ) {
 
 	// }
 
-	read(sockfd, &getID, sizeof(int));
+	read(sockfd, buf, sizeof(buf));
 
-	printf("assigned id: %d\n", getID);
+	printf("assigned id: %s\n", buf);
 
 	// if (read(connfd, &get, sizeof(int)) > 0) {
 	// 	if (getID != -1) {
