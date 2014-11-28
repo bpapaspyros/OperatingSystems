@@ -9,6 +9,13 @@
 #include <sys/wait.h>	// waitpid system call
 #include <netinet/in.h>	// includes all the necessary protocols
 #include <netdb.h>		// definitions for network database operations
+#include <semaphore.h>	// semaphore functions
+#include <sys/ipc.h>	// inter process communication access structure
+#include <sys/shm.h>	// defines constants and functions for shared memory
+
+#define SHMSZ  270
+char SEM_NAME[]= "vik";
+
 
 // defining port number
 #define PORT_NO 55623
@@ -92,4 +99,6 @@ void printInventory(Inventory *inv) {
 	for (i=0; i<inv->count; i++){
 		printf("%s \t %d\n", inv->items[i], inv->quantity[i]);
 	}
+
+	printf("\n");
 }

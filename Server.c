@@ -26,6 +26,12 @@ void initSockets(int *listenfd, struct sockaddr_in *servaddr);
 void serverUp(int connfd, int listenfd, struct sockaddr_in cliaddr, 
 		socklen_t clilen, pid_t childpid, GameStatus gs, Inventory inv, Settings s);
 
+
+
+void testFeature();
+
+
+
 /*- ---------------------------------------------------------------- -*/
 
 int main(int argc, char **argv) {
@@ -131,9 +137,6 @@ void serverUp(int connfd, int listenfd, struct sockaddr_in cliaddr,
 		childpid = fork();
 
 /*- ------------------- testing ------------------- */
-
-		
-
 		if (childpid == 0) {	// checking if it is the child process
 			close(listenfd);	// closing up the listening socket
 
@@ -142,12 +145,16 @@ void serverUp(int connfd, int listenfd, struct sockaddr_in cliaddr,
 			}
 
 			putchar('\n');
-
-			// itoa(room_count, buffer);
 			sprintf(buffer, "%d", gs.slots);
-
 			// ----> here we should check tha validity of our items
 			write(connfd, buffer, sizeof(buffer));
+
+
+
+			testFeature();
+
+
+
 
 			exit(0); 	// terminating the process
 		}
@@ -170,8 +177,48 @@ void catch_sig(int signo) {
 
 	// ensuring that all children processes have died
 	while((pid = waitpid(-1, &stat, WNOHANG)) > 0) {
-		printf("Child %d terminated.\n", pid);
+		printf("\n \t Child %d terminated.\n", pid);
 	}
 }
 
 /*- ---------------------------------------------------------------- -*/
+
+void testFeature() {
+
+	int shmid;		// shared memory id
+	key_t key;		// shared memory key
+	char *shm, *s;	// shared memory pointers
+
+ 	// naming our shared memory
+	key = 5678;
+
+	// checking if we could create the segment
+	if ((shmid = shmget(key, SHMSZ, IPC_CREAT | 0666)) < 0) {
+		perror("shmget");
+		exit(1);
+	}
+
+	// attaching the segment to the data space
+	if ((shm = shmat(shmid, NULL, 0)) == (char *) -1) {
+		perror("shmat");
+		exit(1);
+	}
+
+
+	// putting things in the memory
+	s = shm;
+
+	strcpy(s, "test"); 
+
+	// for (c = 'a'; c <= 'z'; c++)
+
+	// *s++ = c;
+
+	// *s = NULL;
+
+
+	// waiting until the client signals that he read the info
+	while (*shm != '*')
+
+	sleep(1);
+}
