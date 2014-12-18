@@ -31,6 +31,13 @@ typedef struct {
 	int quota;
 }Inventory;
 
+// typedef struct {
+// 	char **items;
+// 	int *quantity;
+// 	int count;
+// 	int quota;
+// }Inventory;
+
 /*- ---------------------------------------------------------------- -*/
 /**
  * @brief This function reads through the given inventory
@@ -59,6 +66,21 @@ int readInventory(char *filename, Inventory *inv) {
 				break;	
 			}
 
+ 			// allocating memory for our arrays
+ 			// if (inv->count == 0) {	// allocating memory for the first time
+ 			// 	inv->quantity = (int *)malloc( sizeof(int));
+ 
+ 			// 	// 2d array allocation (practically an array of strings
+) 			// 	inv->items = (char **)malloc( sizeof(char *));
+ 			// 	inv->items[inv->count] = (char *)malloc( sizeof(char));
+ 			// } else {				// reallocating memory
+ 			// 	inv->quantity = (int *)realloc(inv->quantity, (inv->count+1)*sizeof(int));
+ 				
+ 			// 	// 2d array re allocations
+ 			// 	inv->items = (char **)realloc(inv->items, (inv->count+1)*sizeof(char *));
+ 			// 	inv->items[inv->count] = (char *)realloc(inv->items[inv->count], (strlen(buffer)+1)*sizeof(char));
+ 			// }
+ 			
 			// assigning the values tha were read to the struct
 			inv->quantity[inv->count] = q;
 			strcpy(inv->items[inv->count], buffer);
