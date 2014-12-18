@@ -69,5 +69,34 @@ typedef struct {
 	}
 }
 /*- ---------------------------------------------------------------- -*/
+/**
+ * @brief Checking the validity of the inventory that the client sent 
+ *
+ * @param Takes in the server and the client inventory to update the server
+ * inventory or declare that the client sent an invalid inventory
+ *
+ * @return Returns 1 if everything is ok else -1
+ */
+int checkInv(Inventory *srv, Inventory cli, int max_quota) {
+	int i;		// for counter
+	int pos=-1;	// holds the index of the array where the element was found
+
+	// checking quota
+	if (cli.quota > max_quota) {
+		return -1;
+	}
+
+	// checking items ...
+	for(i=0; i<cli.count; i++) {
+		if ( findItem(*srv, cli.items[i], &pos) ) {
+			srv->quantity[pos] -= cli.quantity[i];
+		} else {
+			return -1;
+		}
+	}
+
+	return -1;
+}
+/*- ---------------------------------------------------------------- -*/
 
 #endif

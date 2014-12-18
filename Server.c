@@ -18,33 +18,29 @@
 
 // catching signals
 void catch_sig(int signo);	// signal handler for zombie processes
+void catch_int(int signo);	// terminating the server
 
 // initializing the structs and vars for the server
 void initSockets(int *listenfd, struct sockaddr_in *servaddr);		
 
 // takes the server "online"
 void serverUp(int connfd, int listenfd, struct sockaddr_in cliaddr, 
-		socklen_t clilen, pid_t childpid, GameStatus gs, Inventory inv, Settings s);
-
-
-
-void testFeature();
-
-
+		socklen_t clilen, pid_t childpid, GameStatus gs, Inventory *inv, Settings s);
+	
 
 /*- ---------------------------------------------------------------- -*/
-
 int main(int argc, char **argv) {
 	// game vars 
 	Settings set;	// Game settings
 	GameStatus gs;	// Game status tracking
-	Inventory inv;	// Game inventory as requested
+
+	// Game inventory as requested
+	Inventory inv;
 
 	// communication vars
-	int listenfd, connfd; // socket descriptors
-	char line;			  // used to output chars to stdout
-	pid_t childpid;		  // storing the child process pid
-	socklen_t clilen;	  // client address length
+	int listenfd, connfd = -1; // socket descriptors
+	pid_t childpid = -1; 	   // storing the child process pid
+	socklen_t clilen = -1;	   // client address length
 		// structs for client/server addresses
 	struct sockaddr_in cliaddr, servaddr; 
 
@@ -53,17 +49,20 @@ int main(int argc, char **argv) {
 	initSettings(argc, argv, &set, &gs);
 
 	// taking data from inventory to a struct for easy management
-	readInventory(set.inventory, &inv);
-	
+	if ( readInventory(set.inventory, &inv) ) {
+		perror("Inventory problem");
+		return -1;
+	}
+
 	// printing the inventory to the user
-	printInventory(&inv);
+	printInventory(inv);
 
 	// initializing sockets and server address
 	initSockets(&listenfd, &servaddr);
 
 	// start listening
 	serverUp(connfd, listenfd, cliaddr, 
-		     clilen, childpid, gs, inv, set);
+		     clilen, childpid, gs, &inv, set);
 
 	return 0;
 }
@@ -78,7 +77,9 @@ int main(int argc, char **argv) {
  */
 void initSockets(int *listenfd, struct sockaddr_in *servaddr) {
 	// handling signals to avoid zombie processes
+	// and handling server termination
 	signal(SIGCHLD, catch_sig);
+	signal(SIGINT, catch_int);
 
 	// server's endpoint
 	*listenfd = socket(AF_INET, SOCK_STREAM, 0); 
@@ -112,9 +113,12 @@ void initSockets(int *listenfd, struct sockaddr_in *servaddr) {
  *
  */
 void serverUp(int connfd, int listenfd, struct sockaddr_in cliaddr, 
-		socklen_t clilen, pid_t childpid, GameStatus gs, Inventory inv, Settings s) {
-
-	char buffer[20];
+		socklen_t clilen, pid_t childpid, GameStatus gs, 
+		Inventory *inv, Settings s) {
+	
+	char name[20];		// player name	
+	char buffer[1024];	// buffer for server-client messages
+	Inventory cli;		// client inventory that we will receive
 
 	// infinite loop, here we handle requests
 	for (;;) {
@@ -134,31 +138,34 @@ void serverUp(int connfd, int listenfd, struct sockaddr_in cliaddr,
 
 		// forking the process and creating a child
 		// checking if we need a new game room
-		childpid = fork();
+		if (childpid != 0) {
+			childpid = fork();
+		}
 
-/*- ------------------- testing ------------------- */
 		if (childpid == 0) {	// checking if it is the child process
 			close(listenfd);	// closing up the listening socket
 
+			// getting player data from the client
 			if (read(connfd, buffer, sizeof(buffer)) > 0) {
-				printf("%s", buffer);
+				parseStrIntoInv(name, buffer, &cli);	// parsing to match our struct			
 			}
 
-			putchar('\n');
-			sprintf(buffer, "%d", gs.slots);
-			// ----> here we should check tha validity of our items
-			write(connfd, buffer, sizeof(buffer));
+			// sending the room id
+			if( write(connfd, &gs.slots, sizeof(gs.slots) < 0) ) {
+				perror("Couldn't assign player to a room");
+				exit(1);				
+			}
 
+/*- ------------------- testing ------------------- */
+			printf("Parent pid %d \n", getppid());
+			printf("Child pid %d \n", getpid());
 
+			printInventory(*inv);
+			printInventory(cli);
 
-			testFeature();
-
-
-
-
-			exit(0); 	// terminating the process
+			exit(0);
 		}
-
+		
 		close(connfd);	// closing the connected socket
 	}
 /*- ------------------- testing ------------------- */
@@ -166,59 +173,38 @@ void serverUp(int connfd, int listenfd, struct sockaddr_in cliaddr,
 
 /*- ---------------------------------------------------------------- -*/
 /**
- * @brief Handles the various signal codes
+ * @brief Handles the sigchld signal
  *
  * @param Takes in the signal int code
  *
  */
 void catch_sig(int signo) {
+	(void) signo;
+
 	pid_t pid;
 	int stat;
 
 	// ensuring that all children processes have died
-	while((pid = waitpid(-1, &stat, WNOHANG)) > 0) {
+	while( (pid = waitpid(-1, &stat, WNOHANG)) > 0 ) {
 		printf("\n \t Child %d terminated.\n", pid);
 	}
 }
 
 /*- ---------------------------------------------------------------- -*/
+/**
+ * @brief Handles the sigint signal
+ *
+ * @param Takes in the signal int code
+ *
+ */
+void catch_int(int signo) {
+	(void) signo;
 
-void testFeature() {
+	// goodbye message
+	printf("\n\n\t\t Server Terminated. GoodBye ! \n\n");
 
-	int shmid;		// shared memory id
-	key_t key;		// shared memory key
-	char *shm, *s;	// shared memory pointers
-
- 	// naming our shared memory
-	key = 5678;
-
-	// checking if we could create the segment
-	if ((shmid = shmget(key, SHMSZ, IPC_CREAT | 0666)) < 0) {
-		perror("shmget");
-		exit(1);
-	}
-
-	// attaching the segment to the data space
-	if ((shm = shmat(shmid, NULL, 0)) == (char *) -1) {
-		perror("shmat");
-		exit(1);
-	}
-
-
-	// putting things in the memory
-	s = shm;
-
-	strcpy(s, "test"); 
-
-	// for (c = 'a'; c <= 'z'; c++)
-
-	// *s++ = c;
-
-	// *s = NULL;
-
-
-	// waiting until the client signals that he read the info
-	while (*shm != '*')
-
-	sleep(1);
+	// exiting
+	exit(0);
 }
+
+/*- ---------------------------------------------------------------- -*/

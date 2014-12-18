@@ -13,36 +13,42 @@
 #include "SharedHeader.h"
 #include "ClientBackend.h"
 
-
-void testFeature();
-
-
-
 // initializes the sockets and server
 void init(int *sockfd, struct hostent *server, 
 	struct sockaddr_in *servaddr, char *h);
 
 // getting the client running
-void clientUp(int sockfd, struct sockaddr_in *servaddr, cSettings set);
+void clientUp(int sockfd, struct sockaddr_in *servaddr, cSettings set, Inventory inv);
+
+// sending the inventory to the server
+int sendInv(Inventory inv, int sockfd);
+
 
 /*- ---------------------------------------------------------------- -*/
 
 int main(int argc, char **argv) {
 	cSettings set;					// player settings
+	Inventory inv;					// player inventory
 
 	int sockfd;						// socket
 	struct sockaddr_in servaddr;	// struct for server address
-	struct hostent *server;			// stores information about the given host
+	struct hostent *server = NULL;	// stores information about the given host
 
 
 	// getting parameters to set up the server according to the user
 	initcSettings(argc, argv, &set);
 
+	// taking data from inventory to a struct for easy management
+	readInventory(set.inventory, &inv);
+	
+	// printing the inventory to the user
+	printInventory(inv);
+
 	// initializing socket and server values
 	init(&sockfd, server, &servaddr, set.host_name);
 
 	// starting up the client
-	clientUp(sockfd, &servaddr, set);
+	clientUp(sockfd, &servaddr, set, inv);
 
 	return 0;
 }
@@ -92,81 +98,36 @@ void init(int *sockfd, struct hostent *server,
  * @param Takes in the socket and the sockaddress
  *
  */
-void clientUp(int sockfd, struct sockaddr_in *servaddr, cSettings set) {
-	char buf[20];
+void clientUp(int sockfd, struct sockaddr_in *servaddr, cSettings set, Inventory inv) {
+	int id;				// id of the room the client was assigned
+	char response[15];	// response message from the server
+	char str[1024];		// string that will contain data to send to the server
 
 	// connect the client's and server's endpoints
 	if ( connect(sockfd, (struct sockaddr *) servaddr, sizeof(*servaddr)) < 0 ) {
 		perror("Couldn't connect");
+		exit(1);
+	}
+	
+	// sending the inventory to the server for checking
+		// parsing the inventory to string
+	parseInvIntoStr(set.name, &inv, str);
+		// writing the info to the server
+	write(sockfd, str, sizeof(str));
+	
+	
+	// get the room id
+	if( read(sockfd, &id, sizeof(id)) < 0 ) {
+		perror("Couldn't assign player to a room");
+		exit(1);
 	}
 
+	printf("assigned id: %d\n", id);
+
 /*- ------------------- testing ------------------- */
-	write(sockfd, set.name, sizeof(set.name));
-	read(sockfd, buf, sizeof(buf));
-	printf("assigned id: %s\n", buf);
-
-
-
-
-	testFeature();
-
-
+	// getting response from the server
 
 
 	close(sockfd);
 /*- ------------------- testing ------------------- */
-}
-
-void testFeature() {
- 
-	int shmid;
-	key_t key;
-	char *shm, *s;
-
-
-
-	/*
-	* We need to get the segment named
-	* "5678", created by the server.
-	*/
-
-	key = 5678;
-
-	/*
-	* Locate the segment.
-	*/
-
-	if ((shmid = shmget(key, SHMSZ, 0666)) < 0) {
-		perror("shmget");
-		exit(1);
-	}
-
-
-
-	/*
-	* Now we attach the segment to our data space.
-	*/
-
-	if ((shm = shmat(shmid, NULL, 0)) == (char *) -1) {
-		perror("shmat");
-		exit(1);
-	}
-
-	/*
-	* Now read what the server put in the memory.
-	*/
-
-	for (s = shm; *s != NULL; s++)
-		putchar(*s);
-
-	putchar('\n');
-
-
-	/*
-	* Finally, change the first character of the
-	* segment to '*', indicating we have read
-	* the segment.
-	*/
-
-	*shm = '*';
 }

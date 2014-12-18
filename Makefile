@@ -1,21 +1,31 @@
-CXX=gcc 
-CXXFLAGS=-Wall -Wextra
+FLAGS=-Wall -Wextra
+DEBUGFLAGS=-DDEBUG -g -O0
+INCLUDES= -I.
+LIBS=-lpthread
+LL=gcc
+CC=gcc $(INCLUDES) $(FLAGS)
 
 all: GameServer	GameClient
 
-GameServer:	Server.o 
-	$(CXX) $^ -o test_server -lpthread
+debug: CC += $(DEBUGFLAGS)
+debug: GameServer	GameClient
 
-Server.o: Server.c 	ServerBackend.h	SharedHeader.h
-	@ $(CXX) -c Server.c -lpthread
+GameServer:	Server.o
+	$(LL) $^ -o server $(LIBS)
 
 GameClient: Client.o
-	$(CXX) $^ -o test_client -lpthread
+	$(LL) $^ -o client $(LIBS)
+
+Server.o: Server.c ServerBackend.h SharedHeader.h
+	$(CC) Server.c -c -o Server.o
 
 Client.o: Client.c ClientBackend.h SharedHeader.h
-	@ $(CXX) -c Client.c -lpthread
+	$(CC) Client.c -c -o Client.o
+
+# %.o: %.c SharedHeader.h
+# 	$(CC) -c -o $@ $<
 
 .PHONY:	clean
 
 clean:
-	rm -f test *.o	*.str test_client test_server
+	rm -f test *.o	*.str server client
