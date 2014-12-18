@@ -43,5 +43,5 @@ To run the client properly you need to set 3 variables, the inventory file, a na
 ```
 
 ```sh
-./client -n p1 -i cliInventory1.dat $(hostanme)
+./client -n p1 -i cliInventory1.dat $(hostname)
 ```
