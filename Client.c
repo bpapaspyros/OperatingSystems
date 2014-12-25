@@ -10,7 +10,7 @@
  *
  */
 
-#include "SharedHeader.h"
+#include "Inventory.h"
 #include "ClientBackend.h"
 
 // initializes the sockets and server
@@ -39,7 +39,10 @@ int main(int argc, char **argv) {
 	initcSettings(argc, argv, &set);
 
 	// taking data from inventory to a struct for easy management
-	readInventory(set.inventory, &inv);
+	if ( readInventory(set.inventory, &inv, 0, NULL) ) {
+		perror("Inventory problem");
+		return -1;
+	}
 	
 	// printing the inventory to the user
 	printInventory(inv);
@@ -49,6 +52,8 @@ int main(int argc, char **argv) {
 
 	// starting up the client
 	clientUp(sockfd, &servaddr, set, inv);
+
+	free(server);
 
 	return 0;
 }
@@ -99,35 +104,12 @@ void init(int *sockfd, struct hostent *server,
  *
  */
 void clientUp(int sockfd, struct sockaddr_in *servaddr, cSettings set, Inventory inv) {
-	int id;				// id of the room the client was assigned
-	char response[15];	// response message from the server
-	char str[1024];		// string that will contain data to send to the server
-
 	// connect the client's and server's endpoints
 	if ( connect(sockfd, (struct sockaddr *) servaddr, sizeof(*servaddr)) < 0 ) {
 		perror("Couldn't connect");
 		exit(1);
 	}
 	
-	// sending the inventory to the server for checking
-		// parsing the inventory to string
-	parseInvIntoStr(set.name, &inv, str);
-		// writing the info to the server
-	write(sockfd, str, sizeof(str));
-	
-	
-	// get the room id
-	if( read(sockfd, &id, sizeof(id)) < 0 ) {
-		perror("Couldn't assign player to a room");
-		exit(1);
-	}
-
-	printf("assigned id: %d\n", id);
-
-/*- ------------------- testing ------------------- */
-	// getting response from the server
-
 
 	close(sockfd);
-/*- ------------------- testing ------------------- */
 }

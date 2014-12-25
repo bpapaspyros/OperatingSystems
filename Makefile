@@ -16,10 +16,10 @@ GameServer:	Server.o
 GameClient: Client.o
 	$(LL) $^ -o client $(LIBS)
 
-Server.o: Server.c ServerBackend.h SharedHeader.h
+Server.o: Server.c ServerBackend.h Inventory.h
 	$(CC) Server.c -c -o Server.o
 
-Client.o: Client.c ClientBackend.h SharedHeader.h
+Client.o: Client.c ClientBackend.h Inventory.h
 	$(CC) Client.c -c -o Client.o
 
 # %.o: %.c SharedHeader.h

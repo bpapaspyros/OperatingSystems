@@ -3,9 +3,9 @@
 
 // Structs
 typedef struct {
-	char name[20];
-	char inventory[20];
-	char host_name[20];
+	char name[32];
+	char inventory[32];
+	char host_name[32];
 	int roomID;
 }cSettings;
 

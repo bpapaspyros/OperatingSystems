@@ -10,7 +10,7 @@
  *
  */
 
-#include "SharedHeader.h"
+#include "Inventory.h"
 #include "ServerBackend.h"	// server backend, which handles the game
 
 // size for the queue
@@ -25,14 +25,12 @@ void initSockets(int *listenfd, struct sockaddr_in *servaddr);
 
 // takes the server "online"
 void serverUp(int connfd, int listenfd, struct sockaddr_in cliaddr, 
-		socklen_t clilen, pid_t childpid, GameStatus gs, Inventory *inv, Settings s);
-	
+		socklen_t clilen, pid_t childpid, Inventory *inv, Settings s);
 
 /*- ---------------------------------------------------------------- -*/
 int main(int argc, char **argv) {
 	// game vars 
 	Settings set;	// Game settings
-	GameStatus gs;	// Game status tracking
 
 	// Game inventory as requested
 	Inventory inv;
@@ -46,15 +44,15 @@ int main(int argc, char **argv) {
 
 
 	// getting parameters to set up the server according to the user
-	initSettings(argc, argv, &set, &gs);
+	initSettings(argc, argv, &set);
 
 	// taking data from inventory to a struct for easy management
-	if ( readInventory(set.inventory, &inv) ) {
+	if ( readInventory(set.inventory, &inv, 0, NULL) ) {
 		perror("Inventory problem");
 		return -1;
 	}
 
-	// printing the inventory to the user
+	// printing the inventory to the user	
 	printInventory(inv);
 
 	// initializing sockets and server address
@@ -62,7 +60,7 @@ int main(int argc, char **argv) {
 
 	// start listening
 	serverUp(connfd, listenfd, cliaddr, 
-		     clilen, childpid, gs, &inv, set);
+		     clilen, childpid, &inv, set);
 
 	return 0;
 }
@@ -113,17 +111,14 @@ void initSockets(int *listenfd, struct sockaddr_in *servaddr) {
  *
  */
 void serverUp(int connfd, int listenfd, struct sockaddr_in cliaddr, 
-		socklen_t clilen, pid_t childpid, GameStatus gs, 
+		socklen_t clilen, pid_t childpid, 
 		Inventory *inv, Settings s) {
-	
-	char name[20];		// player name	
-	char buffer[1024];	// buffer for server-client messages
-	Inventory cli;		// client inventory that we will receive
 
 	// infinite loop, here we handle requests
 	for (;;) {
+		printf("parent id %d\n", getppid());
 		clilen = sizeof(cliaddr);	// got address length
-
+		
 		// get next request and remove it from queue afterwards
 		connfd = accept(listenfd, (struct sockaddr *) &cliaddr, &clilen);
 
@@ -137,38 +132,16 @@ void serverUp(int connfd, int listenfd, struct sockaddr_in cliaddr,
 		}
 
 		// forking the process and creating a child
-		// checking if we need a new game room
-		if (childpid != 0) {
-			childpid = fork();
-		}
+		childpid = fork();
 
-		if (childpid == 0) {	// checking if it is the child process
-			close(listenfd);	// closing up the listening socket
-
-			// getting player data from the client
-			if (read(connfd, buffer, sizeof(buffer)) > 0) {
-				parseStrIntoInv(name, buffer, &cli);	// parsing to match our struct			
-			}
-
-			// sending the room id
-			if( write(connfd, &gs.slots, sizeof(gs.slots) < 0) ) {
-				perror("Couldn't assign player to a room");
-				exit(1);				
-			}
-
-/*- ------------------- testing ------------------- */
-			printf("Parent pid %d \n", getppid());
-			printf("Child pid %d \n", getpid());
-
-			printInventory(*inv);
-			printInventory(cli);
+		if (childpid == 0) {	// checking if it is the child process					
+			close(listenfd);
 
 			exit(0);
 		}
 		
 		close(connfd);	// closing the connected socket
 	}
-/*- ------------------- testing ------------------- */
 }
 
 /*- ---------------------------------------------------------------- -*/

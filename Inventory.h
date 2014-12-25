@@ -19,24 +19,103 @@
 #include <sys/stat.h>	// mode constants
 
 // defining port number
-#define PORT_NO 55623
-#define SHM_SIZE  270			// defining the shared memory size
-char SEM_NAME[]= "gameservers";	// shared memory name
+#define PORT_NO 5623
+
+// defining line length
+#define LINE_LEN 32
+
+// defining the max file size
+#define pSize 2048
 
 // struct containing the inventory data
 typedef struct {
-	char items[1024][32];
-	int quantity[1024];
+	char **items;
+	int *quantity;
 	int count;
 	int quota;
 }Inventory;
 
-// typedef struct {
-// 	char **items;
-// 	int *quantity;
-// 	int count;
-// 	int quota;
-// }Inventory;
+
+/*- ---------------------------------------------------------------- -*/
+/**
+ * @brief This function initializes the variables of an inventory struct
+ * to zero or NULL values so that they are ready for further editing
+ *
+ * @param Takes an inventory pointer
+ *
+ */
+void initInventory(Inventory *inv) {
+	// initializing the counter of the items to zero
+	inv->count = 0;
+	inv->quota = 0;
+
+	// setting our pointers to null
+	inv->items = NULL;
+	inv->quantity = NULL;
+}
+
+/*- ---------------------------------------------------------------- -*/
+/**
+ * @brief This function allocates memory for one item in the struct
+ * and fills in this item
+ *
+ * @param Takes an inventory pointer, the item string and its quantity
+ *
+ */
+void newInventoryRecord(Inventory *inv, char *item, int quantity) {
+	// allocating memory for our arrays
+	inv->quantity = realloc((inv->quantity), sizeof(int)*(inv->count+1));
+
+	if ( (inv->quantity) == NULL ) {
+		perror("Allocation error");
+		exit(1);
+	}
+
+		// 2d array re allocations
+	inv->items = realloc((inv->items), (inv->count+1)*sizeof(char *));
+
+	if ( (inv->items) == NULL ) {
+		perror("Allocation error -> items first dimension");
+		exit(1);
+	}
+
+	inv->items[inv->count] = realloc((inv->items[inv->count]), (strlen(item)+1)*sizeof(char));			
+
+	if ( (inv->items[inv->count]) == NULL ) {
+		perror("Allocation error -> items second dimension");
+		exit(1);
+	}
+
+	// assigning the values tha were read to the struct
+	inv->quantity[inv->count] = quantity;
+	strcpy(inv->items[inv->count], item);
+
+	// increasing the counter since we added a new item
+	inv->count++;
+	inv->quota += quantity;
+}
+
+/*- ---------------------------------------------------------------- -*/
+/**
+ * @brief This function frees the heap allocated memory
+ *
+ * @param Takes an inventory pointer
+ *
+ */
+void freeInventory(Inventory *inv) {
+	int i;	// for counter
+
+	// free-ing the 1d array
+	free((inv->quantity));
+
+	// free-ing the 2nd dimension of our items array
+	for (i=0; i<(inv->count); ++i) {
+		free((inv->items[i]));
+	}
+
+	// free-ing the 1st dimension of the items array
+	free((inv->items));
+}
 
 /*- ---------------------------------------------------------------- -*/
 /**
@@ -45,49 +124,48 @@ typedef struct {
  * have to read through the file all the time
  *
  * @param Takes in the filename and an instance of an inventory 
- * struct
+ * struct, an int that tells use whether tha player name is
+ * included in the file and a name string
  *
  * @return Returns 0 if the function ran correctly and 1 if not
  */
-int readInventory(char *filename, Inventory *inv) {
-	FILE *fp;			// file pointer
-	char buffer[32];	// temp buffer for file strings
-	int q;				// int variable for file ints
+int readInventory(char *filename, Inventory *inv, int mode, char *name) {
+	FILE *fp;		// file pointer
+	char *buffer;	// temp buffer for file strings
+	int q;			// int variable for file ints
 
-	// initializing the counter of the items to zero
-	inv->count = 0;
-	inv->quota = 0;
+	// initializing the pointers and counters of our struct
+	initInventory(inv);
 
 	// checking if file exists and opening it for reading
 	if ( (fp = fopen(filename, "r" )) ) {
+		// if the name is attached to the file
+		if (mode) {
+			// reading the name and checking for errors
+			if (fscanf(fp, "%s", name) < 0) {
+				return 1;	// problem reading the name
+			}
+		}
+
 		while(!feof(fp)) {	// looping until we find the EOF
+			// allocating memory for the temporary buffer
+			buffer = malloc(sizeof(char)*LINE_LEN);
+
+			if (buffer == NULL) {
+				perror("Allocation error -> buffer");
+				exit(1);
+			}
+			
 			// all data are stored like: string \t int
-			if ( fscanf(fp, "%s \t %d", buffer, &q) < 0) {	// reading data from file
-				break;	
+			if ( fscanf(fp, "%s \t %d", buffer, &q) < 0 ) {	// reading data from file
+				break;	// the parameter list didn't meet our expectations
 			}
 
- 			// allocating memory for our arrays
- 			// if (inv->count == 0) {	// allocating memory for the first time
- 			// 	inv->quantity = (int *)malloc( sizeof(int));
- 
- 			// 	// 2d array allocation (practically an array of strings
-) 			// 	inv->items = (char **)malloc( sizeof(char *));
- 			// 	inv->items[inv->count] = (char *)malloc( sizeof(char));
- 			// } else {				// reallocating memory
- 			// 	inv->quantity = (int *)realloc(inv->quantity, (inv->count+1)*sizeof(int));
- 				
- 			// 	// 2d array re allocations
- 			// 	inv->items = (char **)realloc(inv->items, (inv->count+1)*sizeof(char *));
- 			// 	inv->items[inv->count] = (char *)realloc(inv->items[inv->count], (strlen(buffer)+1)*sizeof(char));
- 			// }
- 			
-			// assigning the values tha were read to the struct
-			inv->quantity[inv->count] = q;
-			strcpy(inv->items[inv->count], buffer);
+			// Adding the record to our inventory
+			newInventoryRecord(inv, buffer, q);
 
-			// increasing the counter since we added a new item
-			inv->count++;
-			inv->quota += q;
+			// freeing the allocated memory
+			free(buffer);
 		}
 
 		fclose(fp);	// closing it up
@@ -108,64 +186,22 @@ int readInventory(char *filename, Inventory *inv) {
  * @param Takes in  the name, a string and an empty inventory (pointer)
  */
 void parseStrIntoInv(char *name, char *str, Inventory *outInv) {
-	int i;			 	// for counter
-	int strIndex = 0;	// index for the string we are filling
-	int gotName = 0; 	// flag for the name
-	int gotTab = 0;		// flag for the tab
-	int size = (int)strlen(str);	// getting the string length
-	char num[32];		// buffer for the quantity before we parse it to int
+	FILE *fp;	// file pointer
 
-	// setting the struct item and quota counter to 0
-	outInv->count = 0;
-	outInv->quota = 0;
+	// opening the temporary file for writing
+	if ( (fp = fopen("tmp.txt", "w" ) ) ) {
+		fprintf(fp, "%s", str);	// writing the whole string to it
+		fclose(fp);					// closing up the file
+	} else {
+		perror("Problem opening a temporary file");
+	}
 
-	// iterating through each char of the string
-	for (i=0; i<size; ++i) {
-		if ( (str[i] == '\n') && (strIndex == 0) ) {
-			break;	// empty line (according to the rules the request has ended)
-		}
+	// completing the parsing by calling the already defined
+	// function that reads inventories from files
+	readInventory("tmp.txt", outInv, 1, name);
 
-		// parsing the name
-		if (!gotName) {
-			if (str[i] == '\n') {
-				++gotName;				// setting the flag to 1
-				name[strIndex] = '\0';	// terminating the string
-				strIndex = 0;			// resetting the index for the next strings
-			} else {
-				name[strIndex++] = str[i];	// filling the string with chars				
-			}
-		} else {
-			// parsing the inventory
-				// setting up for the next line
-			if (str[i] == '\n') {
-				// terminating the quantity string 
-				num[strIndex] = '\0';
-
-				// updating the struct with the quantity that we read
-				outInv->quantity[(outInv->count)] = atoi(num);
-				outInv->quota += outInv->quantity[(outInv->count)];	// updating the quota var
-
-				++(outInv->count);	// increasing the item counter
-				--gotTab;			// resetting the tab flag
-				strIndex = 0;		// reset the string index
-			} else if (str[i] == '\t') {
-				// terminating the current string
-				outInv->items[(outInv->count)][strIndex] = '\0';
-
-				++gotTab;		// setting the flag to 1
-				strIndex = 0;	// resetting the string index
-			} else {
-				if (gotTab) {
-					// filling the quantity string
-					num[strIndex++] = str[i];
-				} else {
-					// filling the items string
-					outInv->items[(outInv->count)][strIndex++] = str[i];
-				}
-			}			
-		}// if gotName
-	}// for
-
+	// deleting the temporary file
+	unlink("tmp.txt");
 }
 
 /*- ---------------------------------------------------------------- -*/
@@ -175,21 +211,21 @@ void parseStrIntoInv(char *name, char *str, Inventory *outInv) {
  *
  * @param Takes in the players name and his inventory and parses it to a string
  */
-void parseInvIntoStr(char *name, Inventory *inv, char *str) {
+void parseInvIntoStr(char *name, Inventory inv, char *str) {
 	int i; 					// for counter
 	char tab[] = "\t";		// tab seperator
 	char newline[] = "\n";	// newline
-	char numToS[20];		// number that we will convert to int
+	char numToS[LINE_LEN];	// number that we will convert to int
 
 	// putting the name in the first line
 	strcpy(str, name);
 	strcat(str, newline);
 
 	// concatenating the rest of the items
-	for(i=0; i<inv->count; i++) {
-		strcat(str, inv->items[i]);
+	for(i=0; i<inv.count; i++) {
+		strcat(str, inv.items[i]);
 		strcat(str, tab);
-		sprintf(numToS, "%d", inv->quantity[i]);
+		sprintf(numToS, "%d", inv.quantity[i]);
 		strcat(str, numToS);
 		strcat(str, newline);
 	}
@@ -240,7 +276,7 @@ int checkForDuplicates(Inventory inv) {
 		}// j
 
 		if (flag > 1) {
-			return 1;
+			return 1;	// found a duplicate entry
 		}
 	}// i
 
