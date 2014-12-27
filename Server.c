@@ -16,6 +16,10 @@
 // size for the queue
 #define LISTENQ 150
 
+// key for the shared memory segment
+// that will hold the gameserver flags
+#define SHM_KEY 5623
+
 // catching signals
 void catch_sig(int signo);	// signal handler for zombie processes
 void catch_int(int signo);	// terminating the server
@@ -25,7 +29,12 @@ void initSockets(int *listenfd, struct sockaddr_in *servaddr);
 
 // takes the server "online"
 void serverUp(int connfd, int listenfd, struct sockaddr_in cliaddr, 
-		socklen_t clilen, pid_t childpid, Inventory *inv, Settings s);
+		socklen_t clilen, pid_t childpid, Inventory *inv, Settings *s);
+
+// opening a game room
+void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd, 
+	socklen_t clilen, struct sockaddr_in cliaddr);
+
 
 /*- ---------------------------------------------------------------- -*/
 int main(int argc, char **argv) {
@@ -41,7 +50,6 @@ int main(int argc, char **argv) {
 	socklen_t clilen = -1;	   // client address length
 		// structs for client/server addresses
 	struct sockaddr_in cliaddr, servaddr; 
-
 
 	// getting parameters to set up the server according to the user
 	initSettings(argc, argv, &set);
@@ -60,7 +68,7 @@ int main(int argc, char **argv) {
 
 	// start listening
 	serverUp(connfd, listenfd, cliaddr, 
-		     clilen, childpid, &inv, set);
+		     clilen, childpid, &inv, &set);
 
 	return 0;
 }
@@ -112,36 +120,145 @@ void initSockets(int *listenfd, struct sockaddr_in *servaddr) {
  */
 void serverUp(int connfd, int listenfd, struct sockaddr_in cliaddr, 
 		socklen_t clilen, pid_t childpid, 
-		Inventory *inv, Settings s) {
+		Inventory *inv, Settings *s) {
+
+	// flag to signal us that we need a new room
+	int needroom = 1;
+
+	// pipe vars
+	int fd[2];	// pipe array
+	pipe(fd);	// declaring fd is a pipe
+
 
 	// infinite loop, here we handle requests
 	for (;;) {
-		printf("parent id %d\n", getppid());
 		clilen = sizeof(cliaddr);	// got address length
-		
-		// get next request and remove it from queue afterwards
-		connfd = accept(listenfd, (struct sockaddr *) &cliaddr, &clilen);
 
+		// forking the process and creating a child
+		// if the last room is full or this room is the first
+		if (needroom) {
+			needroom = 0;		// updating the flag to zero until we need a room
+			childpid = fork();	// well ... fork
+		}
+
+		if (childpid == 0) {	// checking if it is the child process	
+			needroom = 0;		// only the parent server can create rooms, avoiding trouble	
+			openGameRoom(fd, s, inv, connfd, listenfd, clilen, cliaddr);
+		} else {
+			// Printing the parent pid
+			printf("\n| Main Server pid: %d |\n\n", getppid());
+			printf("* Game room opened ... \n\n");
+
+			// waiting until we need a new room
+			read(fd[0], &needroom, sizeof(needroom));
+		} // if		
+	} // for
+}
+
+/*- ---------------------------------------------------------------- -*/
+/**
+ * @brief Game Room server (a fork of the initial game server) that will
+ * handle client requests by forking itself and serving them. When the 
+ * room is full we write through a pipe to the parent server to let him
+ * know that we need a new room. After all players have exited the room
+ * the game room server closes up the room before exiting
+ *
+ * @param Takes the pipe array, the settings, the servers inventory
+ * the connection and listening sockets, the client length (struct 
+ * length) and client address struct
+ *
+ */
+void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd, 
+	socklen_t clilen, struct sockaddr_in cliaddr) {
+	
+	// pid for the server process that will handle the player
+	pid_t newpid = -1;
+
+	// room flag
+	int needroom = 0;
+
+	// player vars
+	int playerCount = 0;	// counting the players
+
+	// pipe between the gameroom and the server-client
+	int pl[2];
+	pipe(pl);	// declaring the pl array as a pipe
+
+
+	// printing the room's pid
+	printf("\n| Opened a game room with pid: %d |\n\n", getpid());
+
+	for (;;) {			
+		// get next request and remove it from queue afterwards
+		connfd = accept(listenfd, (struct sockaddr *)&cliaddr, &clilen);
+
+		// checking if connection was successfull
 		if (connfd < 0) {
-			if (errno == EINTR) 
+			if (errno == EINTR) {
 				continue;
-			else { // something interrupted us
+			} else { // something interrupted us
 				fprintf(stderr, "Got an error while trying to connect \n");
 				exit(1);
 			}
 		}
 
-		// forking the process and creating a child
-		childpid = fork();
+		// forking the process to serve the request
+		newpid = fork();
 
-		if (childpid == 0) {	// checking if it is the child process					
-			close(listenfd);
+		// the child process handles the request
+		if (newpid == 0) {
+			close(listenfd);	// closing up the listening socket
+
+/*- -------------- testing -------------- -*/
+			++playerCount;
+			write(pl[1], &playerCount, sizeof(playerCount));
+
+			// do shit here
+			sleep(10);
+
+			// --playerCount;
+			// write(pl[1], &playerCount, sizeof(playerCount));
+/*- -------------- testing -------------- -*/
+
 
 			exit(0);
-		}
-		
-		close(connfd);	// closing the connected socket
-	}
+		} else {
+			close(connfd);	// closing the connection socket (child process is handling it)
+
+			// waiting for the child to update us on the player counter
+			read(pl[0], &playerCount, sizeof(playerCount));
+
+			// if we reach the limit set then we stop listening
+			// and ask the parent server for a new room
+			if (playerCount == s->players) {
+				close(listenfd);	// closing the listening socket for this room
+				
+				// printing a message from the server's point to
+				// inform that this room is full
+				printf("\n| Room %d: Full |\n\n", getpid());
+				
+				// closing up the pipe on both points
+				close(pl[0]);
+				close(pl[1]);
+
+				// raising the room flag and writing to the parent
+				needroom = 1;
+				write(fd[1], &needroom, sizeof(needroom));
+
+				// breaking out of the loop
+				break;
+			}
+		} // if
+	} // while
+
+/*- -------------- testing -------------- -*/
+	printf("\n| Room %d: Game in progress ...|\n\n", getpid());
+	sleep(30);
+	printf("\n| Room %d: Game in ended ...|\n\n", getpid());
+/*- -------------- testing -------------- -*/
+
+	// exiting with success status after closing up the room
+	exit(0);
 }
 
 /*- ---------------------------------------------------------------- -*/
@@ -174,7 +291,7 @@ void catch_int(int signo) {
 	(void) signo;
 
 	// goodbye message
-	printf("\n\n\t\t Server Terminated. GoodBye ! \n\n");
+	printf("\n\n\t\t Server Terminated. GoodBye ! \n\n");	
 
 	// exiting
 	exit(0);

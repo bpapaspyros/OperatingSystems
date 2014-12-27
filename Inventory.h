@@ -24,9 +24,6 @@
 // defining line length
 #define LINE_LEN 32
 
-// defining the max file size
-#define pSize 2048
-
 // struct containing the inventory data
 typedef struct {
 	char **items;

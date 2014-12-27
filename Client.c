@@ -105,7 +105,7 @@ void init(int *sockfd, struct hostent *server,
  */
 void clientUp(int sockfd, struct sockaddr_in *servaddr, cSettings set, Inventory inv) {
 	// connect the client's and server's endpoints
-	if ( connect(sockfd, (struct sockaddr *) servaddr, sizeof(*servaddr)) < 0 ) {
+	if ( connect(sockfd, (struct sockaddr *)servaddr, sizeof(*servaddr)) < 0 ) {
 		perror("Couldn't connect");
 		exit(1);
 	}
