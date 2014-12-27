@@ -33,8 +33,13 @@ void serverUp(int connfd, int listenfd, struct sockaddr_in cliaddr,
 
 // opening a game room
 void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd, 
-	socklen_t clilen, struct sockaddr_in cliaddr);
+	socklen_t clilen, struct sockaddr_in cliaddr, int roomsOpened);
 
+// opening a memory segment for the game room
+int openSharedMem(int roomsOpened, Inventory *inv, int **data);
+
+// closing the room's shared memory segment
+void closeSharedMem(int shmid);
 
 /*- ---------------------------------------------------------------- -*/
 int main(int argc, char **argv) {
@@ -57,6 +62,12 @@ int main(int argc, char **argv) {
 	// taking data from inventory to a struct for easy management
 	if ( readInventory(set.inventory, &inv, 0, NULL) ) {
 		perror("Inventory problem");
+		return -1;
+	}
+
+	// not allowing duplicates in the server's inventory
+	if (checkForDuplicates(inv)) {
+		perror("The game's inventory is not allowed to have duplicate entries");
 		return -1;
 	}
 
@@ -122,6 +133,9 @@ void serverUp(int connfd, int listenfd, struct sockaddr_in cliaddr,
 		socklen_t clilen, pid_t childpid, 
 		Inventory *inv, Settings *s) {
 
+	// room counter
+	int roomsOpened = 0;
+
 	// flag to signal us that we need a new room
 	int needroom = 1;
 
@@ -138,19 +152,23 @@ void serverUp(int connfd, int listenfd, struct sockaddr_in cliaddr,
 		// if the last room is full or this room is the first
 		if (needroom) {
 			needroom = 0;		// updating the flag to zero until we need a room
+			++roomsOpened;		// about to open a new room
 			childpid = fork();	// well ... fork
 		}
 
 		if (childpid == 0) {	// checking if it is the child process	
 			needroom = 0;		// only the parent server can create rooms, avoiding trouble	
-			openGameRoom(fd, s, inv, connfd, listenfd, clilen, cliaddr);
+			openGameRoom(fd, s, inv, connfd, listenfd, clilen, cliaddr, roomsOpened);
 		} else {
 			// Printing the parent pid
 			printf("\n| Main Server pid: %d |\n\n", getppid());
 			printf("* Game room opened ... \n\n");
 
 			// waiting until we need a new room
-			read(fd[0], &needroom, sizeof(needroom));
+			if (read(fd[0], &needroom, sizeof(needroom)) < 0) {
+				perror("Couldn't read from the game server");
+				exit(1);		
+			}
 		} // if		
 	} // for
 }
@@ -165,11 +183,23 @@ void serverUp(int connfd, int listenfd, struct sockaddr_in cliaddr,
  *
  * @param Takes the pipe array, the settings, the servers inventory
  * the connection and listening sockets, the client length (struct 
- * length) and client address struct
+ * length), the client address struct and the room counter
  *
  */
 void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd, 
-	socklen_t clilen, struct sockaddr_in cliaddr) {
+	socklen_t clilen, struct sockaddr_in cliaddr, int roomsOpened) {
+	
+	// semaphore initialization
+	// sem_t *my_sem;	// declaring a semaphore variable
+	
+	// attemting to open the semaphore 
+	// my_sem = sem_open("semsem", O_CREAT | O_RDWR, S_IRUSR | S_IWUSR, 1);
+
+	// // checking if the semahore opened
+	// if (my_sem == SEM_FAILED) {	
+	// 	printf("Could not open semaphore!\n");
+	// 	exit(1);
+	// }
 	
 	// pid for the server process that will handle the player
 	pid_t newpid = -1;
@@ -179,14 +209,26 @@ void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd
 
 	// player vars
 	int playerCount = 0;	// counting the players
+	char plStr[pSize];		// player's inventory in chars
+	Inventory plInv;		// player's inventory in our struct
+	char name[LINE_LEN];	// player's name
+	char response[LINE_LEN];// response to the player
+	int status = 0;			// request status (valid/invalid)
 
 	// pipe between the gameroom and the server-client
 	int pl[2];
 	pipe(pl);	// declaring the pl array as a pipe
 
+	// share memory vars
+	int *qData = NULL;		// pointer to our shared memory data
+	int shmid = -1;			// shared memory id
+
 
 	// printing the room's pid
 	printf("\n| Opened a game room with pid: %d |\n\n", getpid());
+
+	// opening a room specific shared memory
+	shmid = openSharedMem(roomsOpened, inv, &qData);
 
 	for (;;) {			
 		// get next request and remove it from queue afterwards
@@ -209,30 +251,66 @@ void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd
 		if (newpid == 0) {
 			close(listenfd);	// closing up the listening socket
 
+			// waiting for the player to send us his inventory
+			if (read(connfd, plStr, sizeof(plStr)) < 0) {
+				perror("Error reading the player's inventory");
+				exit(1);
+			}
+
+			// parsing the string we received to our Inventory format
+			parseStrIntoInv(name, plStr, &plInv);
+
+			// attempting to give items to the player
+			status = subInventories(inv, plInv, qData, s->quota);
+
+			// checking if the subtraction took place
+			if (status) {
+				++playerCount;	// accepted a player
+
+				// sending the ok message
+				strcpy(response, "OK\n");	
+			} else {
+				// sending a problem message
+				strcpy(response, "Encoutered a problem");
+			}
+
+			// writing the response back to the player
+			if (write(connfd, response, sizeof(response)) < 0) {
+				perror("Couldn't respond to the player");
+				exit(1);
+			}
+
+			// writing the player counter to the current game server
+			if (write(pl[1], &playerCount, sizeof(playerCount)) < 0) {
+				perror("Couldn't write to the pipe");
+				exit(1);
+			}
+
 /*- -------------- testing -------------- -*/
-			++playerCount;
-			write(pl[1], &playerCount, sizeof(playerCount));
 
-			// do shit here
-			sleep(10);
+			// do chatting here ... 
 
-			// --playerCount;
-			// write(pl[1], &playerCount, sizeof(playerCount));
 /*- -------------- testing -------------- -*/
 
-
+			// exiting this process
 			exit(0);
 		} else {
 			close(connfd);	// closing the connection socket (child process is handling it)
 
 			// waiting for the child to update us on the player counter
-			read(pl[0], &playerCount, sizeof(playerCount));
+			if (read(pl[0], &playerCount, sizeof(playerCount)) < 0) {
+				perror("Couldn't read from the pipe");
+				exit(1);				
+			}
 
 			// if we reach the limit set then we stop listening
 			// and ask the parent server for a new room
 			if (playerCount == s->players) {
 				close(listenfd);	// closing the listening socket for this room
 				
+				// we filled the room and no longer need the segment
+				closeSharedMem(shmid);
+
 				// printing a message from the server's point to
 				// inform that this room is full
 				printf("\n| Room %d: Full |\n\n", getpid());
@@ -243,7 +321,10 @@ void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd
 
 				// raising the room flag and writing to the parent
 				needroom = 1;
-				write(fd[1], &needroom, sizeof(needroom));
+				if (write(fd[1], &needroom, sizeof(needroom)) < 0) {
+					perror("Couldn't write to the main server");
+					exit(1);		
+				}
 
 				// breaking out of the loop
 				break;
@@ -254,11 +335,80 @@ void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd
 /*- -------------- testing -------------- -*/
 	printf("\n| Room %d: Game in progress ...|\n\n", getpid());
 	sleep(30);
+
+
+	// do something here ...
+
+
 	printf("\n| Room %d: Game in ended ...|\n\n", getpid());
 /*- -------------- testing -------------- -*/
-
+	
 	// exiting with success status after closing up the room
 	exit(0);
+}
+
+/*- ---------------------------------------------------------------- -*/
+/**
+ * @brief Creates a shared memory segment the size of our inventory
+ * struct, with a key that depends on the rooms opened. This way we
+ * can achive a dynamic shared memory allocator so that each room
+ * gets its own segment to write on
+ *
+ * @param Takes in the number of rooms opened, the inventory struct 
+ * and a pointer to the beginning of the segment
+ *
+ */
+int openSharedMem(int roomsOpened, Inventory *inv, int **data) {
+	int shmid;
+	key_t key;
+	size_t shmsize = sizeof(int)*(inv->count);
+	int *start;
+	int i;
+
+	// naming our shared memory
+	key = SHM_KEY + roomsOpened;
+
+	// creating the memory segment
+	if ((shmid = shmget(key, shmsize, IPC_CREAT | 0666)) < 0) {
+		perror("shmget error");
+		exit(1);
+	}
+
+
+	// attaching segment to our data space
+	if ((*data = shmat(shmid, NULL, 0)) == (int *)-1) {
+		perror("shmat error");
+		exit(1);
+	}
+
+	// adding data to the segment
+	start = *data;
+	
+	// we are only attaching the quantity data to save some space
+	// since we already have the rest of the data in our struct
+	for (i=0; i<inv->count; ++i) {
+		*start = inv->quantity[i];
+		++start;
+	}
+
+	// returning the id so that we can remove the shared memory later on
+	return shmid;
+}
+
+/*- ---------------------------------------------------------------- -*/
+/**
+ * @brief Releases the shared memory segment we reserved
+ *
+ * @param Takes in the shared memory id
+ *
+ */
+void closeSharedMem(int shmid) {
+	key_t ret;
+
+	if ((ret = shmctl(shmid, IPC_RMID, (struct shmid_ds *) NULL)) == -1) {
+		perror("shmctl error");
+		exit(1);
+	}
 }
 
 /*- ---------------------------------------------------------------- -*/

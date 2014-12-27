@@ -24,6 +24,9 @@
 // defining line length
 #define LINE_LEN 32
 
+// defining the max size in chars of an inventory
+#define pSize 1024
+
 // struct containing the inventory data
 typedef struct {
 	char **items;
@@ -240,7 +243,7 @@ void parseInvIntoStr(char *name, Inventory inv, char *str) {
 int findItem(Inventory inv, char *target, int *index) {
 	int i;	// for counter
 
-	for(i=0; i<inv.count; i++) {
+	for(i=0; i<inv.count; ++i) {
 		if ( !strcmp(inv.items[i], target) ) {
 			*index = i;	// keeping the position of the item in the array
 
@@ -263,12 +266,12 @@ int checkForDuplicates(Inventory inv) {
 	int i, j;		// for counter
 	int flag;	// flag for dublicates
 
-	for (i=0; i<inv.count; i++) {
+	for (i=0; i<inv.count; ++i) {
 		flag = 0;	// set the flag to zero at every loop
 
-		for (j=0; j<inv.count; j++) {
+		for (j=0; j<inv.count; ++j) {
 			if (inv.items[i] == inv.items[j]) {
-				flag++;
+				++flag;
 			}
 		}// j
 
@@ -278,6 +281,54 @@ int checkForDuplicates(Inventory inv) {
 	}// i
 
 	return 0;
+}
+
+/*- ---------------------------------------------------------------- -*/
+/**
+ * @brief Subtracts two given inventories according to the rules of the
+ * server. This function checks all necaissary conditions before registering
+ * the changes to the room's inventory
+ *
+ * @param Takes in the room's and player's inventories and the max quota
+ * set in the beginning
+ *
+ * @return 1 if subtraction took place or 0 if a problem occured
+ */
+int subInventories(Inventory *room, Inventory player, int *qData, int quota) {
+	int i;			// for counter
+	int pos = -1;	// position of the matched item
+	int posArray[(player.count)];	// an array of indexes
+
+
+	// checking if the player's inventory follows the rules
+	// concerning the max quota
+	if (player.quota > quota) {
+		return 0;
+	}
+
+	// iterating through the player's items to check
+	// that all items exist, while keeping their position
+	// in the quantity array
+	for (i=0; i<player.count; ++i) {	
+		if (!findItem(*room, player.items[i], &pos)) {
+			return 0;	// item was not found
+		} else {
+			// last check concerning the remaining quantity
+			if ( (qData[pos]-player.quantity[i]) >= 0 ) {
+				posArray[i] = pos;
+			} else {
+				return 0;	// asking too much :P
+			}
+		}
+	}
+
+	// registering the changes since everything went well
+	for (i=0; i<player.count; ++i) {
+			qData[posArray[i]] -= player.quantity[i];
+	}
+
+	// all good ...
+	return 1;
 }
 
 /*- ---------------------------------------------------------------- -*/

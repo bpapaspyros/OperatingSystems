@@ -104,12 +104,42 @@ void init(int *sockfd, struct hostent *server,
  *
  */
 void clientUp(int sockfd, struct sockaddr_in *servaddr, cSettings set, Inventory inv) {
+	char strInv[pSize];		// player's inventory in chars
+	char response[LINE_LEN];// server's response depending on the inventory's validity
+
 	// connect the client's and server's endpoints
 	if ( connect(sockfd, (struct sockaddr *)servaddr, sizeof(*servaddr)) < 0 ) {
 		perror("Couldn't connect");
 		exit(1);
 	}
 	
+	// parsing the inventory struct to char * (ascii chars)
+	parseInvIntoStr(set.name, inv, strInv);
+
+	// writing the string to the server
+	if (write(sockfd, strInv, sizeof(strInv)) < 0) {
+		perror("Error while sending the inventory");
+		exit(1);
+	}
+
+	// waiting for the server to respond on the inventory and 
+	// this player's participation
+	if (read(sockfd, response, sizeof(response)) < 0) {
+		perror("Error getting the server's response");
+		exit(1);
+	}
+
+	// checking the response
+	if (strcmp(response, "OK\n")) {
+		// something went wrong therefore we inform the player
+		printf("Your inventory is invalid or the requested items are not available\n");
+		printf("Exiting ... Try again with a different inventory\n");
+
+		exit(1);
+	} else {
+		printf("%s\n", response);
+	}
+
 
 	close(sockfd);
 }
