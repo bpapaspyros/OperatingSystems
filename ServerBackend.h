@@ -5,7 +5,7 @@
 typedef struct {
 	int players;
 	int quota;
-	char inventory[32];
+	char inventory[LINE_LEN];
 }Settings;
 
 /*- ---------------------------------------------------------------- -*/

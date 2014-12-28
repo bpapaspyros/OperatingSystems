@@ -35,7 +35,6 @@ typedef struct {
 	int quota;
 }Inventory;
 
-
 /*- ---------------------------------------------------------------- -*/
 /**
  * @brief This function initializes the variables of an inventory struct
@@ -71,7 +70,8 @@ void newInventoryRecord(Inventory *inv, char *item, int quantity) {
 		exit(1);
 	}
 
-		// 2d array re allocations
+	// 2d array re allocations
+		// first dimension
 	inv->items = realloc((inv->items), (inv->count+1)*sizeof(char *));
 
 	if ( (inv->items) == NULL ) {
@@ -79,6 +79,10 @@ void newInventoryRecord(Inventory *inv, char *item, int quantity) {
 		exit(1);
 	}
 
+		// initializing the allocated pointer to NULL
+	inv->items[inv->count] = NULL;
+
+		// second dimension
 	inv->items[inv->count] = realloc((inv->items[inv->count]), (strlen(item)+1)*sizeof(char));			
 
 	if ( (inv->items[inv->count]) == NULL ) {
@@ -129,7 +133,7 @@ void freeInventory(Inventory *inv) {
  *
  * @return Returns 0 if the function ran correctly and 1 if not
  */
-int readInventory(char *filename, Inventory *inv, int mode, char *name) {
+int readInventory(char *filename, Inventory *inv) {
 	FILE *fp;		// file pointer
 	char *buffer;	// temp buffer for file strings
 	int q;			// int variable for file ints
@@ -139,14 +143,6 @@ int readInventory(char *filename, Inventory *inv, int mode, char *name) {
 
 	// checking if file exists and opening it for reading
 	if ( (fp = fopen(filename, "r" )) ) {
-		// if the name is attached to the file
-		if (mode) {
-			// reading the name and checking for errors
-			if (fscanf(fp, "%s", name) < 0) {
-				return 1;	// problem reading the name
-			}
-		}
-
 		while(!feof(fp)) {	// looping until we find the EOF
 			// allocating memory for the temporary buffer
 			buffer = malloc(sizeof(char)*LINE_LEN);
@@ -158,6 +154,7 @@ int readInventory(char *filename, Inventory *inv, int mode, char *name) {
 			
 			// all data are stored like: string \t int
 			if ( fscanf(fp, "%s \t %d", buffer, &q) < 0 ) {	// reading data from file
+				free(buffer);
 				break;	// the parameter list didn't meet our expectations
 			}
 
@@ -185,23 +182,110 @@ int readInventory(char *filename, Inventory *inv, int mode, char *name) {
  *
  * @param Takes in  the name, a string and an empty inventory (pointer)
  */
-void parseStrIntoInv(char *name, char *str, Inventory *outInv) {
-	FILE *fp;	// file pointer
+void parseStrIntoInv(char **name, char *str, Inventory *outInv) {
+	int i;			 	// for counter
+	int strIndex = 0;	// index for the string we are filling
+	int gotName = 0; 	// flag for the name
+	int gotTab = 0;		// flag for the tab
+	int size = (int)strlen(str);	// getting the string length
 
-	// opening the temporary file for writing
-	if ( (fp = fopen("tmp.txt", "w" ) ) ) {
-		fprintf(fp, "%s", str);	// writing the whole string to it
-		fclose(fp);					// closing up the file
-	} else {
-		perror("Problem opening a temporary file");
-	}
+	// using the buffers below to store the strings
+	char *item = NULL;
+	char *num = NULL;
 
-	// completing the parsing by calling the already defined
-	// function that reads inventories from files
-	readInventory("tmp.txt", outInv, 1, name);
+	// initializing the name pointer to NULL
+	*name = NULL;	
 
-	// deleting the temporary file
-	unlink("tmp.txt");
+	// initializing our struct
+	initInventory(outInv);
+
+	// iterating through each char of the string
+	for (i=0; i<size; ++i) {
+		if ( (str[i] == '\n') && (strIndex == 0) ) {
+			break;	// empty line (according to the rules the request has ended)
+		}
+
+		// parsing the name
+		if (!gotName) {
+			if (str[i] == '\n') {
+				++gotName;		// setting the flag to 1
+				
+				// allocating space for the \0 char
+				(*name) = realloc((*name), (++strIndex)*sizeof(char));
+				
+				if (*name == NULL) { exit(1); }	// couldn't reserve space 
+
+				// terminating the string
+				(*name)[strIndex-1] = '\0';
+
+				// resetting the index for the next strings
+				strIndex = 0;	
+			} else {
+				// allocating space for one more char
+				(*name) = realloc((*name), (++strIndex)*sizeof(char));
+				
+				if (*name == NULL) { exit(1); }	// couldn't reserve space 
+
+				// putting the char into the string
+				(*name)[strIndex-1] = str[i];				
+			}
+		} else {
+			// parsing the inventory
+				// setting up for the next line
+			if (str[i] == '\n') {
+				// allocating space for one more char
+				num = realloc(num, (++strIndex)*sizeof(char));
+				
+				if (num == NULL) { exit(1); }	// couldn't reserve space 
+
+				// terminating the quantity string 
+				num[strIndex-1] = '\0';
+
+				// adding a new record to our struct with what we parsed
+				newInventoryRecord(outInv, item, atoi(num));
+
+				// free-ing the allocated buffers
+				free(num);
+				free(item);
+
+				// setting their value to NULL for reuse
+				num = NULL;
+				item = NULL;
+
+				--gotTab;			// resetting the tab flag
+				strIndex = 0;		// reset the string index
+			} else if (str[i] == '\t') {
+				// allocating space for one more char
+				item = realloc(item, (++strIndex)*sizeof(char));
+
+				if (item == NULL) { exit(1); }	// couldn't reserve space 
+
+				// terminating the string
+				item[strIndex-1] = '\0';
+
+				++gotTab;		// setting the flag to 1
+				strIndex = 0;	// resetting the string index
+			} else {
+				if (gotTab) {
+					// allocating space for one more char
+					num = realloc(num, (++strIndex)*sizeof(char));
+
+					if (num == NULL) { exit(1); }	// couldn't reserve space 
+
+					// filling the quantity string
+					num[strIndex-1] = str[i];
+				} else {
+					// allocating space for one more char
+					item = realloc(item, (++strIndex)*sizeof(char));
+					
+					if (item == NULL) { exit(1); }	// couldn't reserve space 
+
+					// filling the items string
+					item[strIndex-1] = str[i];
+				}
+			}			
+		}// if gotName
+	}// for
 }
 
 /*- ---------------------------------------------------------------- -*/

@@ -13,6 +13,8 @@
 #include "Inventory.h"
 #include "ClientBackend.h"
 
+#define WAIT 60
+
 // initializes the sockets and server
 void init(int *sockfd, struct hostent *server, 
 	struct sockaddr_in *servaddr, char *h);
@@ -22,6 +24,25 @@ void clientUp(int sockfd, struct sockaddr_in *servaddr, cSettings set, Inventory
 
 // sending the inventory to the server
 int sendInv(Inventory inv, int sockfd);
+
+// declaring a var to let us know when the client waited too long
+volatile int timeOut = WAIT;
+
+// handler for the alarm function
+void catch_alarm(int signo) {
+	(void) signo;
+
+	signal(SIGALRM, SIG_IGN);
+	printf("Waiting for game to start ... \n\n");
+	signal(SIGALRM, catch_alarm);
+
+	if(!(timeOut -= 5)) {
+		printf("Connection timed out, exiting ... \n\n");
+		exit(1);
+	}
+
+	alarm(5);
+}
 
 
 /*- ---------------------------------------------------------------- -*/
@@ -34,12 +55,14 @@ int main(int argc, char **argv) {
 	struct sockaddr_in servaddr;	// struct for server address
 	struct hostent *server = NULL;	// stores information about the given host
 
+	// setting the alarm handler
+	signal(SIGALRM, catch_alarm);
 
 	// getting parameters to set up the server according to the user
 	initcSettings(argc, argv, &set);
 
 	// taking data from inventory to a struct for easy management
-	if ( readInventory(set.inventory, &inv, 0, NULL) ) {
+	if ( readInventory(set.inventory, &inv) ) {
 		perror("Inventory problem");
 		return -1;
 	}
@@ -123,7 +146,7 @@ void clientUp(int sockfd, struct sockaddr_in *servaddr, cSettings set, Inventory
 	}
 
 	// waiting for the server to respond on the inventory and 
-	// this player's participation
+	// this player's participationmak
 	if (read(sockfd, response, sizeof(response)) < 0) {
 		perror("Error getting the server's response");
 		exit(1);
@@ -139,6 +162,10 @@ void clientUp(int sockfd, struct sockaddr_in *servaddr, cSettings set, Inventory
 	} else {
 		printf("%s\n", response);
 	}
+
+	// setting the alarm to go off every 5 seconds
+	alarm(5);
+
 
 
 	close(sockfd);

@@ -20,6 +20,9 @@
 // that will hold the gameserver flags
 #define SHM_KEY 5623
 
+// wait time for the server until connection expires
+#define WAIT 60
+
 // catching signals
 void catch_sig(int signo);	// signal handler for zombie processes
 void catch_int(int signo);	// terminating the server
@@ -41,6 +44,20 @@ int openSharedMem(int roomsOpened, Inventory *inv, int **data);
 // closing the room's shared memory segment
 void closeSharedMem(int shmid);
 
+// handler for the alarm function
+void catch_alarm(int signo) {
+	(void) signo;
+
+	// deactivating the alarm
+	signal(SIGALRM, SIG_IGN);
+
+	// inforiming the server user that this connection timed out
+	printf("Connection with pid %d timed out, exiting ... \n\n", getpid());
+
+	// exiting ...
+	exit(1);
+}
+
 /*- ---------------------------------------------------------------- -*/
 int main(int argc, char **argv) {
 	// game vars 
@@ -59,8 +76,8 @@ int main(int argc, char **argv) {
 	// getting parameters to set up the server according to the user
 	initSettings(argc, argv, &set);
 
-	// taking data from inventory to a struct for easy management
-	if ( readInventory(set.inventory, &inv, 0, NULL) ) {
+	// taking data from the inventory file to a struct for easy management
+	if ( readInventory(set.inventory, &inv) ) {
 		perror("Inventory problem");
 		return -1;
 	}
@@ -93,10 +110,11 @@ int main(int argc, char **argv) {
  * 
  */
 void initSockets(int *listenfd, struct sockaddr_in *servaddr) {
-	// handling signals to avoid zombie processes
-	// and handling server termination
+	// setting our signal handlers
 	signal(SIGCHLD, catch_sig);
 	signal(SIGINT, catch_int);
+	signal(SIGALRM, catch_alarm);
+
 
 	// server's endpoint
 	*listenfd = socket(AF_INET, SOCK_STREAM, 0); 
@@ -200,7 +218,7 @@ void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd
 	// 	printf("Could not open semaphore!\n");
 	// 	exit(1);
 	// }
-	
+
 	// pid for the server process that will handle the player
 	pid_t newpid = -1;
 
@@ -211,7 +229,7 @@ void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd
 	int playerCount = 0;	// counting the players
 	char plStr[pSize];		// player's inventory in chars
 	Inventory plInv;		// player's inventory in our struct
-	char name[LINE_LEN];	// player's name
+	char *name;				// player's name
 	char response[LINE_LEN];// response to the player
 	int status = 0;			// request status (valid/invalid)
 
@@ -258,7 +276,7 @@ void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd
 			}
 
 			// parsing the string we received to our Inventory format
-			parseStrIntoInv(name, plStr, &plInv);
+			parseStrIntoInv(&name, plStr, &plInv);
 
 			// attempting to give items to the player
 			status = subInventories(inv, plInv, qData, s->quota);
@@ -286,17 +304,17 @@ void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd
 				exit(1);
 			}
 
+			close(pl[1]);	// we no longer need this pipe's endpoint
 /*- -------------- testing -------------- -*/
 
-			// do chatting here ... 
-
+			// alarm(WAIT);
 /*- -------------- testing -------------- -*/
 
 			// exiting this process
 			exit(0);
 		} else {
 			close(connfd);	// closing the connection socket (child process is handling it)
-
+			
 			// waiting for the child to update us on the player counter
 			if (read(pl[0], &playerCount, sizeof(playerCount)) < 0) {
 				perror("Couldn't read from the pipe");
@@ -315,9 +333,8 @@ void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd
 				// inform that this room is full
 				printf("\n| Room %d: Full |\n\n", getpid());
 				
-				// closing up the pipe on both points
+				// closing from this side
 				close(pl[0]);
-				close(pl[1]);
 
 				// raising the room flag and writing to the parent
 				needroom = 1;
