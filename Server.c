@@ -6,7 +6,8 @@
  *
  * Shared memory allocation, creation of sockets and all the backend
  * functions that are expected from a server are implemented in
- * this file
+ * this file. We handle the players requests and implement a chatting
+ * system
  *
  */
 
@@ -18,9 +19,13 @@
 #define LISTENQ 150		// size for the queue
 #define SHM_KEY 5623	// key for the shared memory segment
 #define WAIT 60			// wait time for the server until connection expires
+#define MYERRCODE -5623 // used as error code, funny because it's my student id
 
-sem_t *my_sem = NULL;	// declaring a semaphore variable
-int roomsOpened = 0; 	// room counter
+sem_t *my_sem = NULL;		// declaring a semaphore variable
+int roomsOpened = 0; 		// room counter
+int shmid = MYERRCODE;		// id of the current room's shared memory segment
+pid_t pprocID = MYERRCODE;	// main process's id 
+pid_t rprocID = MYERRCODE;	// only game rooms should store their pid here
 	/*- ---- Global Variables & Defining ---- -*/ 
 
 
@@ -157,6 +162,9 @@ void serverUp(int connfd, int listenfd, struct sockaddr_in cliaddr,
 	int fd[2];	// pipe array
 	pipe(fd);	// declaring fd is a pipe
 
+	// storing this process's id
+	pprocID = getpid();
+
 	// infinite loop, here we handle requests
 	for (;;) {
 		clilen = sizeof(cliaddr);	// got address length
@@ -177,8 +185,7 @@ void serverUp(int connfd, int listenfd, struct sockaddr_in cliaddr,
 			exit(0);
 		} else {
 			// Printing the parent pid
-			printf("\n| Main Server pid: %d |\n\n", getppid());
-			printf("* Game room opened ... \n\n");
+			printf("\n\n| Main Server pid: %d |\n", getpid());
 
 			// waiting until we need a new room
 			if (read(fd[0], &needroom, sizeof(needroom)) < 0) {
@@ -214,7 +221,6 @@ void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd
 
 	// share memory vars
 	int *qData = NULL;		// pointer to our shared memory data
-	int shmid = -1;			// shared memory id
 
 	// player's name
 	char *name;
@@ -225,11 +231,14 @@ void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd
 	int fullFlag[2];	// pipe array
 	pipe(fullFlag);		// declaring fullFlag is a pipe
 
-	// printing the room's pid
-	printf("\n| Opened a game room with pid: %d |\n\n", getpid());
-
 	// socket array
 	int *sockArray = malloc(sizeof(int)*(s->players));
+
+	// storing this process's id
+	rprocID = getpid();
+
+	// printing the room's pid
+	printf("| Opened a game room with pid: %d |\n", rprocID);
 
 	if (sockArray == NULL) {
 		perror("error -> sockArray");
@@ -288,7 +297,7 @@ void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd
 		} else {
 			// printing a message from the server's point to
 			// inform that this room is full
-			printf("\n| Room %d: Full |\n\n", getpid());
+			printf("| Room %d: Full |\n", getpid());
 
 			// raising the room flag and writing to the parent
 			needroom = 1;
@@ -297,11 +306,17 @@ void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd
 				exit(1);		
 			}
 
+			// informing the server side that the game started
+			printf("| Room %d: Game in progress ...|\n", getpid());
+
+			// the shared memory segment is no longer of use to us
+			closeSharedMem(shmid);
+
 			// pushing messages from the child servers to the players
 			pushMessage(plPipe, sockArray, qData, inv->count);
 
 			// informing the server side that this game ended
-			printf("\n| Room %d: Game ended ...|\n\n", getpid());
+			printf("| Room %d: Game ended ...|\n", getpid());
 
 			// breaking out of the loop
 			break;
@@ -313,14 +328,34 @@ void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd
 			// closing up the listening socket
 			close(listenfd);	
 
+			// setting an alarm for this player
+			// if he doesn't stop it then we kick him
+			alarm(WAIT);
+
+			// resetting the copied pid to error status
+			// so that we can tell these processes apart
+			rprocID = MYERRCODE;
+
 			// initiate contact with the player
 			servePlayer(connfd, qData, inv, s, &name, fullFlag, full);
 
-			// informing the server side that the game started
-			printf("\n| Room %d: Game in progress ...|\n\n", getpid());
+			// stopping the alarm
+			alarm(0);
 
 			// connecting the player to the chat
 			chat(connfd, plPipe, name);
+
+			// entering critical area
+			sem_wait(my_sem);
+
+			// lost connection to the player
+			--qData[inv->count];
+
+			// leaving critical area
+			sem_post(my_sem);
+
+			// informing the server side that a player disconnected
+			printf("\t| Player > %s < left room %d |\n", name, getppid());
 
 			// exiting this process
 			exit(0);
@@ -337,7 +372,8 @@ void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd
  * inventory. 
  *
  * @param Takes in the connection socket, the shared memory pointer,
- * the server's inventory and the settings struct
+ * the server's inventory, the settings struct, the player's name,
+ * the parent pipe and the full flag
  *
  */
 void servePlayer(int connfd, int *qData, Inventory *inv, Settings *s, char **name, 
@@ -371,6 +407,9 @@ void servePlayer(int connfd, int *qData, Inventory *inv, Settings *s, char **nam
 
 		// unlocking the segment (out of the critical section)
 		sem_post(my_sem);
+
+		// informing the server side that a player successfully connected
+		printf("| Player > %s < connected |\n", *name);
 
 		// sending the ok message
 		strcpy(response, "OK\n");	
@@ -411,6 +450,9 @@ void servePlayer(int connfd, int *qData, Inventory *inv, Settings *s, char **nam
 		// invalid request
 		exit(0);
 	}
+
+	// free data before returning
+	freeInventory(&plInv);
 }
 
 /*- ---------------------------------------------------------------- -*/
@@ -452,7 +494,6 @@ void chat(int connfd, int *plPipe, char *name) {
 			if (FD_ISSET(connfd, &read_set)) {
 				// attempting to read 
 				if (read(connfd, raw, sizeof(raw)) > 0) {
-
 					// checking if the pipe is good to read
 					// writing the sender's socket num
 					if (FD_ISSET(fd2, &write_set)) {
@@ -468,10 +509,18 @@ void chat(int connfd, int *plPipe, char *name) {
 						// writing the message
 						write(fd2, message, sizeof(message));
 					} 
-				} // connfd read
-			} // connfd is set
+				} else {
+					// set the connfd to a custom error code
+					connfd = MYERRCODE;
+
+					// write this code back to the game server
+					write(fd2, &connfd, sizeof(connfd));
+
+					// lost connection to the player, so we exit the chat
+					break;
+				}
+			} // connfd is set 
 		} // select
-		
 	} // while
 }
 
@@ -490,19 +539,35 @@ void pushMessage(int *plPipe, int *sockArray, int *qData, int plCountPos) {
 	int senderSocket = -1;	// used to identify the sender's socket to avoid duplicate message
 	int i;					// for counter
 
+	// first message to send is START
+	strcpy(message, "START\n");
+
+	// sending the game start message to the players
+	for (i=0; i<qData[plCountPos]; ++i) {
+		// attempting to write the message to the clients
+		if (write(sockArray[i], message, sizeof(message)) < 0) {							
+			perror("Couldn't write START");
+			exit(1);
+		}
+	} 
+
 	// pushing until all players leave the room
 	sem_wait(my_sem);		// entering critical area
-	while (qData[plCountPos] != 0) {
+	while (qData[plCountPos] > 0) {
 		sem_post(my_sem);	// exiting critical area
 
 		// attempting to read the sender's socket
 		read(plPipe[0], &senderSocket, sizeof(senderSocket));
 
+		// received an error code, which means the player left
+		if (senderSocket == MYERRCODE) {
+			continue;
+		}
+
 		// attempting to get the message from the child server
 		if (read(plPipe[0], message, sizeof(message)) < 0) {
 			perror("Error pushing message");
 		} else {				
-
 			// iterating through the open sockets to push the message
 			for (i=0; i<qData[plCountPos]; ++i) {
 				// this was the sender so we don't push the message
@@ -520,7 +585,6 @@ void pushMessage(int *plPipe, int *sockArray, int *qData, int plCountPos) {
 	
 	// exiting critical area
 	sem_post(my_sem);
-
 }
 
 /*- ---------------------------------------------------------------- -*/
@@ -582,12 +646,18 @@ int openSharedMem(int roomsOpened, Inventory *inv, int **data) {
  *
  */
 void closeSharedMem(int shmid) {
+	// returns the key after shmctl
 	key_t ret;
 
+	// attempting to delete the shared memory segment based on its id
 	if ((ret = shmctl(shmid, IPC_RMID, (struct shmid_ds *) NULL)) == -1) {
 		perror("shmctl error");
 		exit(1);
 	}
+
+	// setting the variable that used to hold 
+	// the shared memory id to error status
+	shmid = MYERRCODE;
 }
 
 /*- ---------------------------------------------------------------- -*/
@@ -598,14 +668,20 @@ void closeSharedMem(int shmid) {
  *
  */
 void catch_sig(int signo) {
-	(void) signo;
+	(void) signo;	// unused
 
 	pid_t pid;
 	int stat;
 
+	// if this child is a game server and has died we remove
+	// its dedicated shared memory (if it exists)
+	if ( !(shmid == MYERRCODE) && !(rprocID == MYERRCODE) ) {
+		closeSharedMem(shmid);
+	}
+
 	// ensuring that all children processes have died
 	while( (pid = waitpid(-1, &stat, WNOHANG)) > 0 ) {
-		printf("\n \t Child %d terminated.\n", pid);
+		// waiting for all children to die, avoiding zombie processes
 	}
 }
 
@@ -617,10 +693,20 @@ void catch_sig(int signo) {
  *
  */
 void catch_int(int signo) {
-	(void) signo;
+	(void) signo;	// unused
 
-	// goodbye message
-	printf("\n\n\t\t Server Terminated. GoodBye ! \n\n");	
+	// if this child is a game server and has died we remove
+	// its dedicated shared memory (because we received a sigint)
+	// the last open segment is still open
+	if ( !(shmid == MYERRCODE) && !(rprocID == MYERRCODE) ) {
+		closeSharedMem(shmid);
+	}
+
+
+	if (pprocID == getppid()) {
+		// goodbye message
+		printf("\n\n\t\t Server terminated with SIGINT ... GoodBye ! \n\n");	
+	}
 
 	// exiting
 	exit(0);
@@ -634,13 +720,13 @@ void catch_int(int signo) {
  *
  */
 void catch_alarm(int signo) {
-	(void) signo;
+	(void) signo;	// unused
 
 	// deactivating the alarm
 	signal(SIGALRM, SIG_IGN);
 
 	// inforiming the server user that this connection timed out
-	printf("Connection with pid %d timed out, exiting ... \n\n", getpid());
+	printf("| A player in room %d timed out and was kicked ... |\n", getpid());
 
 	// exiting ...
 	exit(1);

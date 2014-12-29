@@ -425,12 +425,12 @@ void printInventory(Inventory inv) {
 	int i = 0;	// for counter
 
 	// printing our data in the appropriate format
-	printf("Inventory: \n\n");
+	printf("\t Inventory: \n\n");
 	for (i=0; i<inv.count; i++){
-		printf("%s \t %d\n", inv.items[i], inv.quantity[i]);
+		printf("\t\t%s \t %d\n", inv.items[i], inv.quantity[i]);
 	}
 
-	printf("Quota: %d\n", inv.quota);
+	printf("\t\tQuota:\t %d\n", inv.quota);
 
 	printf("\n");
 }

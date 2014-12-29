@@ -7,6 +7,7 @@
  * In this file the player (client) is created. We make contact with
  * the server and get its response concerning the room the player 
  * must be assigned in. We also check his quota and its validity.
+ * If the server gives as confirmation we connect to his chat
  *
  */
 
@@ -15,48 +16,34 @@
 
 #include <pthread.h>
 
-
-void *playerRead(void *param);
-void *playerWrite(void *param);
-
-void bla(int sockfd);
-
-
-
-#define WAIT 60
-
-// initializes the sockets and server
-void init(int *sockfd, struct hostent *server, 
-	struct sockaddr_in *servaddr, char *h);
-
-// getting the client running
-void clientUp(int sockfd, struct sockaddr_in *servaddr, cSettings set, Inventory inv);
-
-// sending the inventory to the server
-int sendInv(Inventory inv, int sockfd);
+	/*- ---- Global Variables & Defining ---- -*/ 
+#define WAIT 60 // wait time
 
 // declaring a var to let us know when the client waited too long
 volatile int timeOut = WAIT;
+	/*- ---- Global Variables & Defining ---- -*/ 
 
-// handler for the alarm function
-void catch_alarm(int signo) {
-	(void) signo;
 
-	signal(SIGALRM, SIG_IGN);
-	printf("Waiting for game to start ... \n\n");
-	signal(SIGALRM, catch_alarm);
+	/*- ------- Function declarations ------- -*/ 
+// thread start functions
+void *playerRead(void *param);
+void *playerWrite(void *param);
 
-	if(!(timeOut -= 5)) {
-		printf("Connection timed out, exiting ... \n\n");
-		exit(1);
-	}
+void initChat(int sockfd);
 
-	alarm(5);
-}
+void catch_alarm(int signo);
+void catch_alarm_con(int signo);
 
+void init(int *sockfd, struct hostent *server, 
+	struct sockaddr_in *servaddr, char *h);
+
+void clientUp(int sockfd, struct sockaddr_in *servaddr, cSettings set, Inventory inv);
+int sendInv(Inventory inv, int sockfd);
+	/*- ------- Function declarations ------- -*/ 
 
 /*- ---------------------------------------------------------------- -*/
-
+// 				Function definitions 
+/*- ---------------------------------------------------------------- -*/
 int main(int argc, char **argv) {
 	cSettings set;					// player settings
 	Inventory inv;					// player inventory
@@ -65,8 +52,8 @@ int main(int argc, char **argv) {
 	struct sockaddr_in servaddr;	// struct for server address
 	struct hostent *server = NULL;	// stores information about the given host
 
-	// setting the alarm handler
-	signal(SIGALRM, catch_alarm);
+	// setting the alarm to another handler
+	signal(SIGALRM, catch_alarm_con);
 
 	// getting parameters to set up the server according to the user
 	initcSettings(argc, argv, &set);
@@ -86,6 +73,7 @@ int main(int argc, char **argv) {
 	// starting up the client
 	clientUp(sockfd, &servaddr, set, inv);
 
+	// free-ing allocated space
 	free(server);
 
 	return 0;
@@ -149,6 +137,10 @@ void clientUp(int sockfd, struct sockaddr_in *servaddr, cSettings set, Inventory
 	// parsing the inventory struct to char * (ascii chars)
 	parseInvIntoStr(set.name, inv, strInv);
 
+	// setting an alarm to close the connection
+	// if the response takes too long
+	alarm(30);	// shouldn't take more than 30 seconds
+
 	// writing the string to the server
 	if (write(sockfd, strInv, sizeof(strInv)) < 0) {
 		perror("Error while sending the inventory");
@@ -173,25 +165,36 @@ void clientUp(int sockfd, struct sockaddr_in *servaddr, cSettings set, Inventory
 		printf("%s\n", response);
 	}
 
-	// setting the alarm to go off every 5 seconds
-	// alarm(5);
+	// stopping the alarm
+	alarm(0);
 
-	bla(sockfd);
+	// removing the handler
+	signal(SIGALRM, SIG_IGN);
 
+	// opening the chat
+	initChat(sockfd);
 
-
+	// close the connected socket
 	close(sockfd);
 }
 
-void bla(int sockfd)
+/*- ---------------------------------------------------------------- -*/
+/**
+ * @brief Opens the chat. This function creates 2 threads, one for
+ * reading and one for writing
+ *
+ * @param Takes in the connection socket
+ *
+ */
+void initChat(int sockfd)
 {
-	pthread_t threadRead, threadWrite;
-	int ird, iwr;
+	pthread_t threadRead, threadWrite;	// declaring two threads
+	int ird, iwr;						// pcreate return values
 
 	// creating a thread for reading from the chat
 	ird = pthread_create(&threadRead, NULL, playerRead, &sockfd);
 	
-	if(ird) {
+	if (ird) {	// checking for errors
 		fprintf(stderr, "Error - pthread_create() return code: %d\n", ird);
 		exit(1);
 	}
@@ -199,31 +202,63 @@ void bla(int sockfd)
 	// creating a thread for writing to the chat
 	iwr = pthread_create(&threadWrite, NULL, playerWrite, &sockfd);
 	
-	if(iwr) {
+	if (iwr) {	// checking for errors
 		fprintf(stderr, "Error - pthread_create() return code: %d\n", iwr);
 		exit(1);
 	}
 
+	// join the threads with this process's termination
 	pthread_join(threadRead, NULL);
 	pthread_join(threadWrite, NULL);
 
-
+	// exiting ... 
 	exit(0);
 }
 
 
-
+/*- ---------------------------------------------------------------- -*/
+/**
+ * @brief Start function for the reading thread. Prints the receives 
+ * messages
+ *
+ * @param Takes in a pointer to the connection socket
+ *
+ * @return Returns NULL
+ */
 void *playerRead(void *args) {
+	// casting the parameter to int *
 	int *sockfd = (int *)args;
 
-	char msg[1024];
+	// declaring a buffer for reading
+	char msg[pSize];
 
+	// setting the alarm to another handler
+	signal(SIGALRM, catch_alarm);
+
+	// setting the alarm to go off every 5 seconds
+	alarm(5);
+
+	// waiting for the START message
+	if (read(*sockfd, msg, sizeof(msg)) < 0) {
+		perror("Error getting the server's response");
+		exit(1);
+	}	
+
+	// got the START message and we stop the timer
+	alarm(0);
+
+	// print the message
+	printf("%s\n", msg);
+
+	// while connection is good
 	while (1) {
+		// get the message
 		if (read(*sockfd, msg, sizeof(msg)) < 0) {
 			perror("Error getting the server's response");
 			exit(1);
 		}	
 
+		// print the message
 		printf("%s\n", msg);
 	}
 
@@ -231,18 +266,32 @@ void *playerRead(void *args) {
 	return NULL;
 }
 
+/*- ---------------------------------------------------------------- -*/
+/**
+ * @brief Start function for the writing thread. Writes messages read
+ * from the stdin to the connected socket
+ *
+ * @param Takes in a pointer to the connection socket
+ *
+ * @return Returns NULL
+ */
 void *playerWrite(void *args) {
+	// casting the parameter to int *
 	int *sockfd = (int *)args;
 
-	char msg[1024];
-	char c;
-	int count = 0;
+	char c;			// character from stdin
+	int count = 0;	// characters read
+	char msg[pSize];// character array
 
+	// while connection is good
 	while(1) {
+		// while the player doesn't press ENTER
 		while( (c = getchar()) != '\n' ) {
+			// reading what he typed
 			msg[count++] = c;
 		}
 
+		// terminating the string
 		msg[count] = '\0';
 
 		// writing the string to the server
@@ -251,9 +300,55 @@ void *playerWrite(void *args) {
 			exit(1);
 		}
 
+		// resetting the counter
 		count = 0;
 	}
 
 	return NULL;
 }
 
+/*- ---------------------------------------------------------------- -*/
+/**
+ * @brief Handles the sigalarm signal
+ *
+ * @param Takes in the signal int code
+ *
+ */
+void catch_alarm_con(int signo) {
+	(void) signo;	// unused
+
+	// always wanted to say that
+	printf("Connection is taking longer than usual. Exiting ... \n\n");
+	
+	// exiting
+	exit(1);
+}
+/*- ---------------------------------------------------------------- -*/
+/**
+ * @brief Handles the sigalarm signal
+ *
+ * @param Takes in the signal int code
+ *
+ */
+void catch_alarm(int signo) {
+	(void) signo;	// unused
+
+	// removing the handler
+	signal(SIGALRM, SIG_IGN);
+
+	// printing wait message
+	printf("Waiting for game to start ... \n\n");
+	
+	// setting the handler again
+	signal(SIGALRM, catch_alarm);
+
+	// checking if we waited too long
+	if(!(timeOut -= 5)) {
+		printf("Connection timed out, exiting ... \n\n");
+		exit(1);
+	}
+
+	// set the timer again
+	alarm(5);
+}
+/*- ---------------------------------------------------------------- -*/
