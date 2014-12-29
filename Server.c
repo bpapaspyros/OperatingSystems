@@ -13,45 +13,40 @@
 #include "Inventory.h"
 #include "ServerBackend.h"	// server backend, which handles the game
 
-// size for the queue
-#define LISTENQ 150
 
-// key for the shared memory segment
-// that will hold the gameserver flags
-#define SHM_KEY 5623
+	/*- ---- Global Variables & Defining ---- -*/ 
+#define LISTENQ 150		// size for the queue
+#define SHM_KEY 5623	// key for the shared memory segment
+#define WAIT 60			// wait time for the server until connection expires
 
-// wait time for the server until connection expires
-#define WAIT 60
-
-// semaphore initialization
 sem_t *my_sem = NULL;	// declaring a semaphore variable
+int roomsOpened = 0; 	// room counter
+	/*- ---- Global Variables & Defining ---- -*/ 
 
 
-// catching signals
-void catch_sig(int signo);	// signal handler for zombie processes
-void catch_int(int signo);	// terminating the server
-void catch_alarm(int signo);// alarm handling
+	/*- ------- Function declarations ------- -*/ 
+void catch_sig(int signo);		// signal handler for zombie processes
+void catch_int(int signo);		// terminating the server
+void catch_alarm(int signo);	// alarm handling
 
-// initializing the structs and vars for the server
 void initServer(int *listenfd, struct sockaddr_in *servaddr);		
-
-// takes the server "online"
 void serverUp(int connfd, int listenfd, struct sockaddr_in cliaddr, 
 		socklen_t clilen, pid_t childpid, Inventory *inv, Settings *s);
 
-// opening a game room
 void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd, 
 	socklen_t clilen, struct sockaddr_in cliaddr, int roomsOpened);
 
-// opening a memory segment for the game room
 int openSharedMem(int roomsOpened, Inventory *inv, int **data);
-
-// closing the room's shared memory segment
 void closeSharedMem(int shmid);
+void servePlayer(int connfd, int *qData, Inventory *inv, Settings *s, char **name,
+	int *fullFlag, int full);
 
-// making contact and serving the player 
-void servePlayer(int connfd, int *qData, Inventory *inv, Settings *s);
+void pushMessage(int *plPipe, int *sockArray, int *qData, int players);
+void chat (int connfd, int *plPipe, char *name);
+	/*- ------- Function declarations ------- -*/ 
 
+/*- ---------------------------------------------------------------- -*/
+// 				Function definitions 
 /*- ---------------------------------------------------------------- -*/
 int main(int argc, char **argv) {
 	// game vars 
@@ -131,7 +126,7 @@ void initServer(int *listenfd, struct sockaddr_in *servaddr) {
 	listen(*listenfd, LISTENQ); 
 
 	// attemting to open the semaphore 
-	my_sem = sem_open("sem", O_CREAT, 0600, 1);
+	my_sem = sem_open("sem5623", O_CREAT, 0600, 1);
 
 	// checking if the semahore opened
 	if (my_sem == SEM_FAILED) {	
@@ -155,16 +150,12 @@ void serverUp(int connfd, int listenfd, struct sockaddr_in cliaddr,
 		socklen_t clilen, pid_t childpid, 
 		Inventory *inv, Settings *s) {
 
-	// room counter
-	int roomsOpened = 0;
-
 	// flag to signal us that we need a new room
 	int needroom = 1;
 
 	// pipe vars
 	int fd[2];	// pipe array
 	pipe(fd);	// declaring fd is a pipe
-
 
 	// infinite loop, here we handle requests
 	for (;;) {
@@ -181,6 +172,9 @@ void serverUp(int connfd, int listenfd, struct sockaddr_in cliaddr,
 		if (childpid == 0) {	// checking if it is the child process	
 			needroom = 0;		// only the parent server can create rooms, avoiding trouble	
 			openGameRoom(fd, s, inv, connfd, listenfd, clilen, cliaddr, roomsOpened);
+		
+			// making sure no child survives past this point
+			exit(0);
 		} else {
 			// Printing the parent pid
 			printf("\n| Main Server pid: %d |\n\n", getppid());
@@ -216,23 +210,40 @@ void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd
 
 	// room flag
 	int needroom = 0;
+	int full = 0;
 
 	// share memory vars
 	int *qData = NULL;		// pointer to our shared memory data
 	int shmid = -1;			// shared memory id
 
+	// player's name
+	char *name;
+
+	int plPipe[2];	// pipe array
+	pipe(plPipe);	// declaring plPipe is a pipe
+
+	int fullFlag[2];	// pipe array
+	pipe(fullFlag);		// declaring fullFlag is a pipe
 
 	// printing the room's pid
 	printf("\n| Opened a game room with pid: %d |\n\n", getpid());
 
+	// socket array
+	int *sockArray = malloc(sizeof(int)*(s->players));
+
+	if (sockArray == NULL) {
+		perror("error -> sockArray");
+		exit(1);
+	}
+
 	// opening a room specific shared memory
 	shmid = openSharedMem(roomsOpened, inv, &qData);
 
+	// this room will time out after a set time if it doesn't fill up
+	// alarm(WAIT);
+
 	for (;;) {			
-
-		printf("counter: %d\n", qData[inv->count]);
-
-		if (qData[inv->count] < s->players-1) {
+		if (!full) {
 			// get next request and remove it from queue afterwards
 			connfd = accept(listenfd, (struct sockaddr *)&cliaddr, &clilen);
 
@@ -246,12 +257,35 @@ void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd
 				}
 			}
 
+			// if we need one more player, then we set the server to
+			// blocking as we want to filter the last request
+			if ( qData[inv->count] == s->players - 1) {
+				++full;	// server might be full with the client we accepted
+			}
+
+			// keeping the sockets
+			sockArray[(qData[inv->count])] = connfd;
+
 			// forking the process to serve the request
 			newpid = fork();
-		} else {
-			// we filled the room and no longer need the segment
-			closeSharedMem(shmid);
+			
+			// if we raised the full flag because we suspected the room 
+			// will be full after this client and this is the game server
+			// not the child
+			if (full && (newpid != 0)) {
 
+				// then we wait confirmation wheter or not the last
+				// spot was taken
+				read(fullFlag[0], &full, sizeof(full));
+
+				// if it was indeed taken, we give the go 
+				// for a new room by entering the main loop
+				if (full) {
+					continue;
+				}
+			}
+
+		} else {
 			// printing a message from the server's point to
 			// inform that this room is full
 			printf("\n| Room %d: Full |\n\n", getpid());
@@ -262,7 +296,13 @@ void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd
 				perror("Couldn't write to the main server");
 				exit(1);		
 			}
-			
+
+			// pushing messages from the child servers to the players
+			pushMessage(plPipe, sockArray, qData, inv->count);
+
+			// informing the server side that this game ended
+			printf("\n| Room %d: Game ended ...|\n\n", getpid());
+
 			// breaking out of the loop
 			break;
 		}
@@ -274,33 +314,18 @@ void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd
 			close(listenfd);	
 
 			// initiate contact with the player
-			servePlayer(connfd, qData, inv, s);
+			servePlayer(connfd, qData, inv, s, &name, fullFlag, full);
 
+			// informing the server side that the game started
+			printf("\n| Room %d: Game in progress ...|\n\n", getpid());
 
-/*- -------------- testing -------------- -*/
-
-			sleep(60);
-
-/*- -------------- testing -------------- -*/
-
+			// connecting the player to the chat
+			chat(connfd, plPipe, name);
 
 			// exiting this process
 			exit(0);
 		}
-
-		// closing the connection socket (child process is handling it)	
-		close(connfd);
-
 	} // for
-
-/*- -------------- testing -------------- -*/
-	printf("\n| Room %d: Game in progress ...|\n\n", getpid());
-	sleep(60);
-
-	// do something here ...
-
-	printf("\n| Room %d: Game ended ...|\n\n", getpid());
-/*- -------------- testing -------------- -*/
 	
 	// exiting with success status after closing up the room
 	exit(0);
@@ -315,13 +340,13 @@ void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd
  * the server's inventory and the settings struct
  *
  */
-void servePlayer(int connfd, int *qData, Inventory *inv, Settings *s) {
+void servePlayer(int connfd, int *qData, Inventory *inv, Settings *s, char **name, 
+	int *fullFlag, int full) {
 	// player vars
-	char plStr[pSize];		// player's inventory in chars
-	Inventory plInv;		// player's inventory in our struct
-	char *name;				// player's name
-	char response[LINE_LEN];// response to the player
-	int status = 0;			// request status (valid/invalid)
+	char plStr[pSize];			// player's inventory in chars
+	Inventory plInv;			// player's inventory in our struct
+	char response[LINE_LEN];	// response to the player
+	int status = 0;				// request status (valid/invalid)
 
 	// waiting for the player to send us his inventory
 	if (read(connfd, plStr, sizeof(plStr)) < 0) {
@@ -330,20 +355,50 @@ void servePlayer(int connfd, int *qData, Inventory *inv, Settings *s) {
 	}
 
 	// parsing the string we received to our Inventory format
-	parseStrIntoInv(&name, plStr, &plInv);
+	parseStrIntoInv(name, plStr, &plInv);
+
+	// locking the segment (critical section)
+	sem_wait(my_sem);
 
 	// attempting to give items to the player
 	status = subInventories(inv, plInv, qData, s->quota);
 
 	// checking if the subtraction took place
 	if (status) {
+
+		// increasing the player counter
 		++qData[inv->count];
+
+		// unlocking the segment (out of the critical section)
+		sem_post(my_sem);
 
 		// sending the ok message
 		strcpy(response, "OK\n");	
 	} else {
+
+		// unlocking the segment
+		sem_post(my_sem);
+
 		// sending a problem message
 		strcpy(response, "Encoutered a problem");
+	}
+
+	// the game server has raised this flag
+	// meaning this might be the last player
+	if (full) {
+		// if this is indeed the last player
+		if ( qData[inv->count] == s->players) {
+			
+			// we send confirmation to open another room
+			write(fullFlag[1], &full, sizeof(full));
+		} else if (qData[inv->count] == s->players - 1) {
+
+			// otherwise we lower the flag
+			full = 0;
+
+			// and let the game server know
+			write(fullFlag[1], &full, sizeof(full));		
+		}
 	}
 
 	// writing the response back to the player
@@ -351,6 +406,121 @@ void servePlayer(int connfd, int *qData, Inventory *inv, Settings *s) {
 		perror("Couldn't respond to the player");
 		exit(1);
 	}
+
+	if (!status) {
+		// invalid request
+		exit(0);
+	}
+}
+
+/*- ---------------------------------------------------------------- -*/
+/**
+ * @brief Initiates the chat. This function handles the server-player side
+ * where if the player sends a message we push it to the game server for 
+ * further distribution
+ *
+ * @param Takes in the connection socket, a pipe to reach the game server
+ * and the player's name to attach to his messages
+ *
+ */
+void chat(int connfd, int *plPipe, char *name) {
+	// this end of the pipe to send messages
+	int fd2 = plPipe[1];
+
+	// declaring a buffer for the raw message
+	char raw[pSize];
+
+	// declaring a string that will hold the final message
+	char message[pSize];
+
+	// read/write fd sets
+	fd_set read_set;
+	fd_set write_set;
+
+	while (1) {
+		// zeroing the read and write fs sets
+		FD_ZERO(&read_set);
+		FD_ZERO(&write_set);
+
+		// adding sockets to the sets
+		FD_SET(connfd, &read_set);	// reading list
+		FD_SET(fd2, &write_set);	// writing list
+
+		// using select to check if the sockest in our list are ready to read/write
+		if(select(connfd+1, &read_set, &write_set, NULL, NULL) > 0) {
+			// checking if connfd is read to read
+			if (FD_ISSET(connfd, &read_set)) {
+				// attempting to read 
+				if (read(connfd, raw, sizeof(raw)) > 0) {
+
+					// checking if the pipe is good to read
+					// writing the sender's socket num
+					if (FD_ISSET(fd2, &write_set)) {
+						write(fd2, &connfd, sizeof(connfd));
+					}
+
+					// checking if the pipe is good to read
+					// writing the message
+					if (FD_ISSET(fd2, &write_set)) {
+						// adding the players name to the raw message
+						sprintf(message, "[%s]: %s", name, raw);
+
+						// writing the message
+						write(fd2, message, sizeof(message));
+					} 
+				} // connfd read
+			} // connfd is set
+		} // select
+		
+	} // while
+}
+
+/*- ---------------------------------------------------------------- -*/
+/**
+ * @brief Receives messages from the child servers and then pushes directly
+ * to the players 
+ *
+ * @param Takes in the pipe array between the game server and the child one,
+ * the array with the stored client sockets, the shared memory pointer and
+ * an index to the player counter for the shared memory pointer
+ *
+ */
+void pushMessage(int *plPipe, int *sockArray, int *qData, int plCountPos) {
+	char message[pSize];	// message that we have to push	
+	int senderSocket = -1;	// used to identify the sender's socket to avoid duplicate message
+	int i;					// for counter
+
+	// pushing until all players leave the room
+	sem_wait(my_sem);		// entering critical area
+	while (qData[plCountPos] != 0) {
+		sem_post(my_sem);	// exiting critical area
+
+		// attempting to read the sender's socket
+		read(plPipe[0], &senderSocket, sizeof(senderSocket));
+
+		// attempting to get the message from the child server
+		if (read(plPipe[0], message, sizeof(message)) < 0) {
+			perror("Error pushing message");
+		} else {				
+
+			// iterating through the open sockets to push the message
+			for (i=0; i<qData[plCountPos]; ++i) {
+				// this was the sender so we don't push the message
+				if (sockArray[i] == senderSocket) {
+					continue;
+				}
+
+				// attempting to write the message to the clients
+				if (write(sockArray[i], message, sizeof(message)) < 0) {							
+					perror("Error pushing message 2");
+				}
+			} // for
+		}
+	} // while 
+	
+	// exiting critical area
+	sem_post(my_sem);
+
 }
 
 /*- ---------------------------------------------------------------- -*/
@@ -373,7 +543,6 @@ int openSharedMem(int roomsOpened, Inventory *inv, int **data) {
 
 	// naming our shared memory
 	key = SHM_KEY + roomsOpened;
-	printf("rooms %d\n", roomsOpened);
 
 	// creating the memory segment
 	if ((shmid = shmget(key, shmsize, IPC_CREAT | 0666)) < 0) {

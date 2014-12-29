@@ -13,6 +13,16 @@
 #include "Inventory.h"
 #include "ClientBackend.h"
 
+#include <pthread.h>
+
+
+void *playerRead(void *param);
+void *playerWrite(void *param);
+
+void bla(int sockfd);
+
+
+
 #define WAIT 60
 
 // initializes the sockets and server
@@ -164,9 +174,86 @@ void clientUp(int sockfd, struct sockaddr_in *servaddr, cSettings set, Inventory
 	}
 
 	// setting the alarm to go off every 5 seconds
-	alarm(5);
+	// alarm(5);
+
+	bla(sockfd);
 
 
 
 	close(sockfd);
 }
+
+void bla(int sockfd)
+{
+	pthread_t threadRead, threadWrite;
+	int ird, iwr;
+
+	// creating a thread for reading from the chat
+	ird = pthread_create(&threadRead, NULL, playerRead, &sockfd);
+	
+	if(ird) {
+		fprintf(stderr, "Error - pthread_create() return code: %d\n", ird);
+		exit(1);
+	}
+
+	// creating a thread for writing to the chat
+	iwr = pthread_create(&threadWrite, NULL, playerWrite, &sockfd);
+	
+	if(iwr) {
+		fprintf(stderr, "Error - pthread_create() return code: %d\n", iwr);
+		exit(1);
+	}
+
+	pthread_join(threadRead, NULL);
+	pthread_join(threadWrite, NULL);
+
+
+	exit(0);
+}
+
+
+
+void *playerRead(void *args) {
+	int *sockfd = (int *)args;
+
+	char msg[1024];
+
+	while (1) {
+		if (read(*sockfd, msg, sizeof(msg)) < 0) {
+			perror("Error getting the server's response");
+			exit(1);
+		}	
+
+		printf("%s\n", msg);
+	}
+
+
+	return NULL;
+}
+
+void *playerWrite(void *args) {
+	int *sockfd = (int *)args;
+
+	char msg[1024];
+	char c;
+	int count = 0;
+
+	while(1) {
+		while( (c = getchar()) != '\n' ) {
+			msg[count++] = c;
+		}
+
+		msg[count] = '\0';
+
+		// writing the string to the server
+		if (write(*sockfd, msg, sizeof(msg)) < 0) {
+			perror("Error while sending the inventory");
+			exit(1);
+		}
+
+		count = 0;
+	}
+
+	return NULL;
+}
+
