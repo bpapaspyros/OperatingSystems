@@ -28,69 +28,70 @@ pid_t pprocID = MYERRCODE;	// main process's id
 pid_t rprocID = MYERRCODE;	// only game rooms should store their pid here
 	/*- ---- Global Variables & Defining ---- -*/ 
 
-
 	/*- ------- Function declarations ------- -*/ 
 void catch_sig(int signo);		// signal handler for zombie processes
 void catch_int(int signo);		// terminating the server
 void catch_alarm(int signo);	// alarm handling
 
-void initServer(int *listenfd, struct sockaddr_in *servaddr);		
-void serverUp(int connfd, int listenfd, struct sockaddr_in cliaddr, 
-		socklen_t clilen, pid_t childpid, Inventory *inv, Settings *s);
+// initializes the server struct (ports, etc)
+void initServer(int *listenfd, struct sockaddr_in *servaddr);	
 
-void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd, 
-	socklen_t clilen, struct sockaddr_in cliaddr, int roomsOpened);
+// gets the main server going	
+void serverUp(ServerVars *sv);
 
-int openSharedMem(int roomsOpened, Inventory *inv, int **data);
-void closeSharedMem(int shmid);
-void servePlayer(int connfd, int *qData, Inventory *inv, Settings *s, char **name,
+// opens a smaller server acting as the game room
+void openGameRoom(int *fd, ServerVars *sv);
+
+// opens another server that handles his player's requests
+void servePlayer(int connfd, int *qData, ServerVars *sv, char **name,
 	int *fullFlag, int full);
 
+// gets a single player's messages and sends it to the game room server
+void chat(int connfd, int *plPipe, char *name);
+
+// game room handles pushing messages to all the players
 void pushMessage(int *plPipe, int *sockArray, int *qData, int players);
-void chat (int connfd, int *plPipe, char *name);
+
+// opens a memory segment for ipc
+int openSharedMem(Inventory *inv, int **data);
+
+// closes the memory segments we opened
+void closeSharedMem(int shmid);
 	/*- ------- Function declarations ------- -*/ 
 
 /*- ---------------------------------------------------------------- -*/
 // 				Function definitions 
 /*- ---------------------------------------------------------------- -*/
 int main(int argc, char **argv) {
-	// game vars 
-	Settings set;	// Game settings
+	// compact way to acces usefull vars
+	ServerVars sv;
 
-	// Game inventory as requested
-	Inventory inv;
-
-	// communication vars
-	int listenfd, connfd = -1; // socket descriptors
-	pid_t childpid = -1; 	   // storing the child process pid
-	socklen_t clilen = -1;	   // client address length
-		// structs for client/server addresses
-	struct sockaddr_in cliaddr, servaddr; 
+	// structs for server address
+	struct sockaddr_in servaddr; 
 
 	// getting parameters to set up the server according to the user
-	initSettings(argc, argv, &set);
+	initSettings(argc, argv, &(sv.s));
 
 	// taking data from the inventory file to a struct for easy management
-	if ( readInventory(set.inventory, &inv) ) {
+	if ( readInventory(sv.s.inventory, &(sv.inv)) ) {
 		perror("Inventory problem");
 		return -1;
 	}
 
 	// not allowing duplicates in the server's inventory
-	if (checkForDuplicates(inv)) {
+	if (checkForDuplicates(sv.inv)) {
 		perror("The game's inventory is not allowed to have duplicate entries");
 		return -1;
 	}
 
 	// printing the inventory to the user	
-	printInventory(inv);
+	printInventory(sv.inv);
 
 	// initializing sockets and server address
-	initServer(&listenfd, &servaddr);
+	initServer(&(sv.listenfd), &servaddr);
 
 	// start listening
-	serverUp(connfd, listenfd, cliaddr, 
-		     clilen, childpid, &inv, &set);
+	serverUp(&sv);
 
 	return 0;
 }
@@ -146,14 +147,13 @@ void initServer(int *listenfd, struct sockaddr_in *servaddr) {
  * Here we make the necessary calls to arrange the game rooms and check
  * for the client's request validity
  *
- * @param Takes in the connection and listening sockets, client address
- * struct, client length (struct length), the child pid, game status and
- * inventory structs 
+ * @param Takes the ServerVars struct containing the inventory and settings
  *
  */
-void serverUp(int connfd, int listenfd, struct sockaddr_in cliaddr, 
-		socklen_t clilen, pid_t childpid, 
-		Inventory *inv, Settings *s) {
+void serverUp(ServerVars *sv) {
+
+	// child pid
+	pid_t childpid = -1;
 
 	// flag to signal us that we need a new room
 	int needroom = 1;
@@ -167,8 +167,6 @@ void serverUp(int connfd, int listenfd, struct sockaddr_in cliaddr,
 
 	// infinite loop, here we handle requests
 	for (;;) {
-		clilen = sizeof(cliaddr);	// got address length
-
 		// forking the process and creating a child
 		// if the last room is full or this room is the first
 		if (needroom) {
@@ -179,7 +177,7 @@ void serverUp(int connfd, int listenfd, struct sockaddr_in cliaddr,
 
 		if (childpid == 0) {	// checking if it is the child process	
 			needroom = 0;		// only the parent server can create rooms, avoiding trouble	
-			openGameRoom(fd, s, inv, connfd, listenfd, clilen, cliaddr, roomsOpened);
+			openGameRoom(fd, sv);
 		
 			// making sure no child survives past this point
 			exit(0);
@@ -204,16 +202,23 @@ void serverUp(int connfd, int listenfd, struct sockaddr_in cliaddr,
  * know that we need a new room. After all players have exited the room
  * the game room server closes up the room before exiting
  *
- * @param Takes the pipe array, the settings, the servers inventory
- * the connection and listening sockets, the client length (struct 
- * length), the client address struct and the room counter
+ * @param Takes the pipe array, ServerVars struct containing the 
+ * inventory, settings and listening socket vars
  *
  */
-void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd, 
-	socklen_t clilen, struct sockaddr_in cliaddr, int roomsOpened) {
+void openGameRoom(int *fd, ServerVars *sv) {
 	
 	// pid for the server process that will handle the player
 	pid_t newpid = -1;
+
+	// connection socket
+	int connfd = -1;
+
+	// client's address length
+	socklen_t clilen;
+
+	// client's address struct
+	struct sockaddr_in cliaddr;
 
 	// room flag
 	int needroom = 0;
@@ -232,7 +237,7 @@ void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd
 	pipe(fullFlag);		// declaring fullFlag is a pipe
 
 	// socket array
-	int *sockArray = malloc(sizeof(int)*(s->players));
+	int *sockArray = malloc(sizeof(int)*(sv->s.players));
 
 	// storing this process's id
 	rprocID = getpid();
@@ -246,12 +251,14 @@ void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd
 	}
 
 	// opening a room specific shared memory
-	shmid = openSharedMem(roomsOpened, inv, &qData);
+	shmid = openSharedMem(&(sv->inv), &qData);
 
 	for (;;) {			
+		clilen = sizeof(cliaddr);	// got address length
+
 		if (!full) {
 			// get next request and remove it from queue afterwards
-			connfd = accept(listenfd, (struct sockaddr *)&cliaddr, &clilen);
+			connfd = accept(sv->listenfd, (struct sockaddr *)&cliaddr, &clilen);
 
 			// checking if connection was successfull
 			if (connfd < 0) {
@@ -265,12 +272,12 @@ void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd
 
 			// if we need one more player, then we set the server to
 			// blocking as we want to filter the last request
-			if ( qData[inv->count] == s->players - 1) {
+			if ( qData[sv->inv.count] == sv->s.players - 1) {
 				++full;	// server might be full with the client we accepted
 			}
 
 			// keeping the sockets
-			sockArray[(qData[inv->count])] = connfd;
+			sockArray[(qData[sv->inv.count])] = connfd;
 
 			// forking the process to serve the request
 			newpid = fork();
@@ -307,13 +314,14 @@ void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd
 			printf("| Room %d: Game in progress ...|\n", getpid());
 
 			// pushing messages from the child servers to the players
-			pushMessage(plPipe, sockArray, qData, inv->count);
+			pushMessage(plPipe, sockArray, qData, sv->inv.count);
 
 			// detaching the room from the shared memory
 			shmdt(qData);
 
 			// marking the shared memory segment for deletion
 			closeSharedMem(shmid);
+			
 			// informing the server side that this game ended
 			printf("| Room %d: Game ended ...|\n", getpid());
 
@@ -325,7 +333,7 @@ void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd
 		if (newpid == 0) {
 
 			// closing up the listening socket
-			close(listenfd);	
+			close(sv->listenfd);	
 
 			// setting an alarm for this player
 			// if he doesn't stop it then we kick him
@@ -336,7 +344,7 @@ void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd
 			rprocID = MYERRCODE;
 
 			// initiate contact with the player
-			servePlayer(connfd, qData, inv, s, &name, fullFlag, full);
+			servePlayer(connfd, qData, sv, &name, fullFlag, full);
 
 			// stopping the alarm
 			alarm(0);
@@ -348,7 +356,7 @@ void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd
 			sem_wait(my_sem);
 
 			// lost connection to the player
-			--qData[inv->count];
+			--qData[sv->inv.count];
 
 			// leaving critical area
 			sem_post(my_sem);
@@ -371,11 +379,12 @@ void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd
  * inventory. 
  *
  * @param Takes in the connection socket, the shared memory pointer,
- * the server's inventory, the settings struct, the player's name,
- * the parent pipe and the full flag
+ * the ServerVars struct containing the inventory, settings and 
+ * listening socket vars the player's name, the parent pipe and 
+ * the full flag
  *
  */
-void servePlayer(int connfd, int *qData, Inventory *inv, Settings *s, char **name, 
+void servePlayer(int connfd, int *qData, ServerVars *sv, char **name, 
 	int *fullFlag, int full) {
 	// player vars
 	char plStr[pSize];			// player's inventory in chars
@@ -396,13 +405,13 @@ void servePlayer(int connfd, int *qData, Inventory *inv, Settings *s, char **nam
 	sem_wait(my_sem);
 
 	// attempting to give items to the player
-	status = subInventories(inv, plInv, qData, s->quota);
+	status = subInventories(&sv->inv, plInv, qData, sv->s.quota);
 
 	// checking if the subtraction took place
 	if (status) {
 
 		// increasing the player counter
-		++qData[inv->count];
+		++qData[sv->inv.count];
 
 		// unlocking the segment (out of the critical section)
 		sem_post(my_sem);
@@ -425,11 +434,11 @@ void servePlayer(int connfd, int *qData, Inventory *inv, Settings *s, char **nam
 	// meaning this might be the last player
 	if (full) {
 		// if this is indeed the last player
-		if ( qData[inv->count] == s->players) {
+		if ( qData[sv->inv.count] == sv->s.players) {
 			
 			// we send confirmation to open another room
 			write(fullFlag[1], &full, sizeof(full));
-		} else if (qData[inv->count] == s->players - 1) {
+		} else if (qData[sv->inv.count] == sv->s.players - 1) {
 
 			// otherwise we lower the flag
 			full = 0;
@@ -597,7 +606,7 @@ void pushMessage(int *plPipe, int *sockArray, int *qData, int plCountPos) {
  * and a pointer to the beginning of the segment
  *
  */
-int openSharedMem(int roomsOpened, Inventory *inv, int **data) {
+int openSharedMem(Inventory *inv, int **data) {
 	int shmid;
 	key_t key;
 	size_t shmsize = sizeof(int)*(inv->count+1);

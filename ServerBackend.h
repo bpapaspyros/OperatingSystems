@@ -2,11 +2,25 @@
 #define SERVERBACKEND_H
 
 // Structs
+	// struct that holds settings
 typedef struct {
 	int players;
 	int quota;
 	char inventory[LINE_LEN];
 }Settings;
+
+	// struct that groups usefull vars
+typedef struct {
+	// game settings
+	Settings s; 
+
+	// server's inventory
+	Inventory inv;
+
+	// listening socket
+	int listenfd; 
+} ServerVars;
+
 
 /*- ---------------------------------------------------------------- -*/
 /**
