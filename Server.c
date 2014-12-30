@@ -248,9 +248,6 @@ void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd
 	// opening a room specific shared memory
 	shmid = openSharedMem(roomsOpened, inv, &qData);
 
-	// this room will time out after a set time if it doesn't fill up
-	// alarm(WAIT);
-
 	for (;;) {			
 		if (!full) {
 			// get next request and remove it from queue afterwards
@@ -309,7 +306,10 @@ void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd
 			// informing the server side that the game started
 			printf("| Room %d: Game in progress ...|\n", getpid());
 
-			// the shared memory segment is no longer of use to us
+			// game room detaching from the shared memory segment
+			shmdt(qData);
+
+			// marking the shared memory segment for deletion
 			closeSharedMem(shmid);
 
 			// pushing messages from the child servers to the players
@@ -341,6 +341,9 @@ void openGameRoom(int *fd, Settings *s, Inventory *inv, int connfd, int listenfd
 
 			// stopping the alarm
 			alarm(0);
+
+			// child process detaching from the shared memory segment
+			shmdt(qData);
 
 			// connecting the player to the chat
 			chat(connfd, plPipe, name);
@@ -655,6 +658,7 @@ void closeSharedMem(int shmid) {
 		exit(1);
 	}
 
+printf("shm3 %d\n", ret);
 	// setting the variable that used to hold 
 	// the shared memory id to error status
 	shmid = MYERRCODE;
