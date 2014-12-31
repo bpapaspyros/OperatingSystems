@@ -125,8 +125,8 @@ void init(int *sockfd, struct hostent *server,
  *
  */
 void clientUp(int sockfd, struct sockaddr_in *servaddr, cSettings set, Inventory inv) {
-	char strInv[pSize];		// player's inventory in chars
-	char response[LINE_LEN];// server's response depending on the inventory's validity
+	// char strInv[pSize];		// player's inventory in chars
+	// char response[LINE_LEN];// server's response depending on the inventory's validity
 
 	// connect the client's and server's endpoints
 	if ( connect(sockfd, (struct sockaddr *)servaddr, sizeof(*servaddr)) < 0 ) {
@@ -134,45 +134,45 @@ void clientUp(int sockfd, struct sockaddr_in *servaddr, cSettings set, Inventory
 		exit(1);
 	}
 	
-	// parsing the inventory struct to char * (ascii chars)
-	parseInvIntoStr(set.name, inv, strInv);
+	// // parsing the inventory struct to char * (ascii chars)
+	// parseInvIntoStr(set.name, inv, strInv);
 
-	// setting an alarm to close the connection
-	// if the response takes too long
-	alarm(30);	// shouldn't take more than 30 seconds
+	// // setting an alarm to close the connection
+	// // if the response takes too long
+	// alarm(30);	// shouldn't take more than 30 seconds
 
-	// writing the string to the server
-	if (write(sockfd, strInv, sizeof(strInv)) < 0) {
-		perror("Error while sending the inventory");
-		exit(1);
-	}
+	// // writing the string to the server
+	// if (write(sockfd, strInv, sizeof(strInv)) < 0) {
+	// 	perror("Error while sending the inventory");
+	// 	exit(1);
+	// }
 
-	// waiting for the server to respond on the inventory and 
-	// this player's participationmak
-	if (read(sockfd, response, sizeof(response)) < 0) {
-		perror("Error getting the server's response");
-		exit(1);
-	}
+	// // waiting for the server to respond on the inventory and 
+	// // this player's participationmak
+	// if (read(sockfd, response, sizeof(response)) < 0) {
+	// 	perror("Error getting the server's response");
+	// 	exit(1);
+	// }
 
-	// checking the response
-	if (strcmp(response, "OK\n")) {
-		// something went wrong therefore we inform the player
-		printf("Your inventory is invalid or the requested items are not available\n");
-		printf("Exiting ... Try again with a different inventory\n");
+	// // checking the response
+	// if (strcmp(response, "OK\n")) {
+	// 	// something went wrong therefore we inform the player
+	// 	printf("Your inventory is invalid or the requested items are not available\n");
+	// 	printf("Exiting ... Try again with a different inventory\n");
 
-		exit(1);
-	} else {
-		printf("%s\n", response);
-	}
+	// 	exit(1);
+	// } else {
+	// 	printf("%s\n", response);
+	// }
 
-	// stopping the alarm
-	alarm(0);
+	// // stopping the alarm
+	// alarm(0);
 
-	// removing the handler
-	signal(SIGALRM, SIG_IGN);
+	// // removing the handler
+	// signal(SIGALRM, SIG_IGN);
 
-	// opening the chat
-	initChat(sockfd);
+	// // opening the chat
+	// initChat(sockfd);
 
 	// close the connected socket
 	close(sockfd);

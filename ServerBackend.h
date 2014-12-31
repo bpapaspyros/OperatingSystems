@@ -19,7 +19,29 @@ typedef struct {
 
 	// listening socket
 	int listenfd; 
+
+	// array for pipe usage
+	// lets us signal the main thread that we need a room
+	int openRoomFlag[2];	// pipe array
 } ServerVars;
+
+typedef struct {
+	// connected socket
+	int pconnfd;
+
+	// player's name
+	char *name;
+
+	// pipe to contact the room thread
+	int lastPlayer[2];
+
+	// checking if the server flagged us
+	// as the last request
+	int *full;
+
+	// pointer to the server vars
+	ServerVars *sv;
+} PlayerData;
 
 
 /*- ---------------------------------------------------------------- -*/

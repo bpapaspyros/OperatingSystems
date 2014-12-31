@@ -14,16 +14,17 @@
 #include "Inventory.h"
 #include "ServerBackend.h"	// server backend, which handles the game
 
+#include <pthread.h>
 
 	/*- ---- Global Variables & Defining ---- -*/ 
 #define LISTENQ 150		// size for the queue
-#define SHM_KEY 5623	// key for the shared memory segment
 #define WAIT 60			// wait time for the server until connection expires
 #define MYERRCODE -5623 // used as error code, funny because it's my student id
 
 sem_t *my_sem = NULL;		// declaring a semaphore variable
 int roomsOpened = 0; 		// room counter
-int shmid = MYERRCODE;		// id of the current room's shared memory segment
+int	playerCount = 0;
+
 pid_t pprocID = MYERRCODE;	// main process's id 
 pid_t rprocID = MYERRCODE;	// only game rooms should store their pid here
 	/*- ---- Global Variables & Defining ---- -*/ 
@@ -40,7 +41,7 @@ void initServer(int *listenfd, struct sockaddr_in *servaddr);
 void serverUp(ServerVars *sv);
 
 // opens a smaller server acting as the game room
-void openGameRoom(int *fd, ServerVars *sv);
+void *openGameRoom(void *arg);
 
 // opens another server that handles his player's requests
 void servePlayer(int connfd, int *qData, ServerVars *sv, char **name,
@@ -52,12 +53,24 @@ void chat(int connfd, int *plPipe, char *name);
 // game room handles pushing messages to all the players
 void pushMessage(int *plPipe, int *sockArray, int *qData, int players);
 
-// opens a memory segment for ipc
-int openSharedMem(Inventory *inv, int **data);
-
-// closes the memory segments we opened
-void closeSharedMem(int shmid);
 	/*- ------- Function declarations ------- -*/ 
+void *playerHandler(void *arg);
+
+int roomAlloc(pthread_t **pArray);
+
+int roomAlloc(pthread_t **pArray) {
+	// reserving space for at least on thread
+	(*pArray) = realloc( (*pArray), sizeof(pthread_t)*(roomsOpened+1) );
+
+	// checking if the allocation was successfull
+	if ((*pArray) == NULL) {
+		perror("Couldn't allocate memory for the room");
+		return -1;
+	}
+
+	return 0;
+}
+
 
 /*- ---------------------------------------------------------------- -*/
 // 				Function definitions 
@@ -130,40 +143,30 @@ void initServer(int *listenfd, struct sockaddr_in *servaddr) {
 
 	// creating the request queue
 	listen(*listenfd, LISTENQ); 
-
-	// attemting to open the semaphore 
-	my_sem = sem_open("sem5623", O_CREAT, 0600, 1);
-
-	// checking if the semahore opened
-	if (my_sem == SEM_FAILED) {	
-		printf("Could not open semaphore!\n");
-		exit(1);
-	}
 }
 
-/*- ---------------------------------------------------------------- -*/
-/**
- * @brief Main server loop where the server waits for client requests.
- * Here we make the necessary calls to arrange the game rooms and check
- * for the client's request validity
- *
- * @param Takes the ServerVars struct containing the inventory and settings
- *
- */
+
 void serverUp(ServerVars *sv) {
 
-	// child pid
-	pid_t childpid = -1;
+	// thread array (one thread per room)
+	pthread_t *pArray = NULL;
+	// pthread_t pArray[20];
+
+
+	// thread creation status
+	int tstat = -1;
 
 	// flag to signal us that we need a new room
 	int needroom = 1;
 
 	// pipe vars
-	int fd[2];	// pipe array
-	pipe(fd);	// declaring fd is a pipe
+	pipe(sv->openRoomFlag);
 
 	// storing this process's id
 	pprocID = getpid();
+
+	// Printing the parent pid
+	printf("\n\n| Main Server pid: %d |\n", pprocID);
 
 	// infinite loop, here we handle requests
 	for (;;) {
@@ -171,45 +174,55 @@ void serverUp(ServerVars *sv) {
 		// if the last room is full or this room is the first
 		if (needroom) {
 			needroom = 0;		// updating the flag to zero until we need a room
-			++roomsOpened;		// about to open a new room
-			childpid = fork();	// well ... fork
-		}
+			
+			// allocating space for a new room
+			if (roomAlloc(&pArray) < 0) {
+				perror("Couldn't allocate memory");
+				exit(1);
+			}
 
-		if (childpid == 0) {	// checking if it is the child process	
-			needroom = 0;		// only the parent server can create rooms, avoiding trouble	
-			openGameRoom(fd, sv);
-		
-			// making sure no child survives past this point
-			exit(0);
-		} else {
-			// Printing the parent pid
-			printf("\n\n| Main Server pid: %d |\n", getpid());
+			// attempting to create a thread
+			tstat = pthread_create(&pArray[roomsOpened], NULL, openGameRoom, sv);
 
+			// checking if thread was successfully created
+			if (tstat != 0) {
+				perror("Couldn't create thread");
+				exit(1);
+			} else {
+				++roomsOpened;
+			}
+			
+			// join the thread with this process termination
+			// pthread_join(pArray[roomsOpened], NULL);
+		} else {	
 			// waiting until we need a new room
-			if (read(fd[0], &needroom, sizeof(needroom)) < 0) {
+			if (read(sv->openRoomFlag[0], &needroom, sizeof(needroom)) < 0) {
 				perror("Couldn't read from the game server");
 				exit(1);		
 			}
-		} // if		
+		}
+	
 	} // for
 }
 
-/*- ---------------------------------------------------------------- -*/
-/**
- * @brief Game Room server (a fork of the initial game server) that will
- * handle client requests by forking itself and serving them. When the 
- * room is full we write through a pipe to the parent server to let him
- * know that we need a new room. After all players have exited the room
- * the game room server closes up the room before exiting
- *
- * @param Takes the pipe array, ServerVars struct containing the 
- * inventory, settings and listening socket vars
- *
- */
-void openGameRoom(int *fd, ServerVars *sv) {
-	
-	// pid for the server process that will handle the player
-	pid_t newpid = -1;
+
+void *openGameRoom(void *arg) {
+	// casting the argument to ServerVars
+	ServerVars *sv = (ServerVars *)arg;
+
+	// struct for the player data
+	PlayerData pd;
+
+		// getting the sv struct to the pd for the player
+	pd.sv = sv;
+
+	// thread array, we will assign one thread
+	// per player. That way we can server many
+	// clients at the same time
+	pthread_t playerThread[sv->s.players];
+
+	// thread creation status
+	int tstat = -1;
 
 	// connection socket
 	int connfd = -1;
@@ -224,34 +237,22 @@ void openGameRoom(int *fd, ServerVars *sv) {
 	int needroom = 0;
 	int full = 0;
 
-	// share memory vars
-	int *qData = NULL;		// pointer to our shared memory data
+	// resetting the player counter
+	playerCount = 0;
 
-	// player's name
-	char *name;
-
-	int plPipe[2];	// pipe array
-	pipe(plPipe);	// declaring plPipe is a pipe
-
-	int fullFlag[2];	// pipe array
-	pipe(fullFlag);		// declaring fullFlag is a pipe
+	// creating a pipe with the player thread
+	pipe(pd.lastPlayer);
 
 	// socket array
 	int *sockArray = malloc(sizeof(int)*(sv->s.players));
-
-	// storing this process's id
-	rprocID = getpid();
-
-	// printing the room's pid
-	printf("| Opened a game room with pid: %d |\n", rprocID);
 
 	if (sockArray == NULL) {
 		perror("error -> sockArray");
 		exit(1);
 	}
 
-	// opening a room specific shared memory
-	shmid = openSharedMem(&(sv->inv), &qData);
+	// printing the room's pid
+	printf("| Opened a game room with pid: %d |\n", getpid());
 
 	for (;;) {			
 		clilen = sizeof(cliaddr);	// got address length
@@ -272,24 +273,26 @@ void openGameRoom(int *fd, ServerVars *sv) {
 
 			// if we need one more player, then we set the server to
 			// blocking as we want to filter the last request
-			if ( qData[sv->inv.count] == sv->s.players - 1) {
+			if ( playerCount == sv->s.players - 1) {
 				++full;	// server might be full with the client we accepted
 			}
 
 			// keeping the sockets
-			sockArray[(qData[sv->inv.count])] = connfd;
+			sockArray[playerCount] = connfd;
 
-			// forking the process to serve the request
-			newpid = fork();
+			// creating the thread that will serve this request
+			tstat = pthread_create(&playerThread[playerCount], NULL, playerHandler, &pd);
+
+			// join the thread with this process termination
+			pthread_join(playerThread[playerCount], NULL);
 			
 			// if we raised the full flag because we suspected the room 
 			// will be full after this client and this is the game server
 			// not the child
-			if (full && (newpid != 0)) {
-
+			if (full) {
 				// then we wait confirmation wheter or not the last
 				// spot was taken
-				read(fullFlag[0], &full, sizeof(full));
+				read(pd.lastPlayer[0], &full, sizeof(full));
 
 				// if it was indeed taken, we give the go 
 				// for a new room by entering the main loop
@@ -305,72 +308,89 @@ void openGameRoom(int *fd, ServerVars *sv) {
 
 			// raising the room flag and writing to the parent
 			needroom = 1;
-			if (write(fd[1], &needroom, sizeof(needroom)) < 0) {
+			if (write(sv->openRoomFlag[1], &needroom, sizeof(needroom)) < 0) {
 				perror("Couldn't write to the main server");
 				exit(1);		
 			}
 
-			// informing the server side that the game started
-			printf("| Room %d: Game in progress ...|\n", getpid());
+	// 		// informing the server side that the game started
+	// 		printf("| Room %d: Game in progress ...|\n", getpid());
 
-			// pushing messages from the child servers to the players
-			pushMessage(plPipe, sockArray, qData, sv->inv.count);
+	// 		// pushing messages from the child servers to the players
+	// 		pushMessage(plPipe, sockArray, qData, sv->inv.count);
 
-			// detaching the room from the shared memory
-			shmdt(qData);
+	// 		// detaching the room from the shared memory
+	// 		shmdt(qData);
 
-			// marking the shared memory segment for deletion
-			closeSharedMem(shmid);
+	// 		// marking the shared memory segment for deletion
+	// 		closeSharedMem(shmid);
 			
-			// informing the server side that this game ended
-			printf("| Room %d: Game ended ...|\n", getpid());
+	// 		// informing the server side that this game ended
+	// 		printf("| Room %d: Game ended ...|\n", getpid());
 
 			// breaking out of the loop
 			break;
 		}
 
-		// the child process handles the request
-		if (newpid == 0) {
+	// 	// the child process handles the request
+	// 	if (newpid == 0) {
 
-			// closing up the listening socket
-			close(sv->listenfd);	
+	// 		// closing up the listening socket
+	// 		close(sv->listenfd);	
 
-			// setting an alarm for this player
-			// if he doesn't stop it then we kick him
-			alarm(WAIT);
+	// 		// setting an alarm for this player
+	// 		// if he doesn't stop it then we kick him
+	// 		alarm(WAIT);
 
-			// resetting the copied pid to error status
-			// so that we can tell these processes apart
-			rprocID = MYERRCODE;
+	// 		// resetting the copied pid to error status
+	// 		// so that we can tell these processes apart
+	// 		rprocID = MYERRCODE;
 
-			// initiate contact with the player
-			servePlayer(connfd, qData, sv, &name, fullFlag, full);
+	// 		// initiate contact with the player
+	// 		servePlayer(connfd, qData, sv, &name, fullFlag, full);
 
-			// stopping the alarm
-			alarm(0);
+	// 		// stopping the alarm
+	// 		alarm(0);
 
-			// connecting the player to the chat
-			chat(connfd, plPipe, name);
+	// 		// connecting the player to the chat
+	// 		chat(connfd, plPipe, name);
 
-			// entering critical area
-			sem_wait(my_sem);
+	// 		// entering critical area
+	// 		sem_wait(my_sem);
 
-			// lost connection to the player
-			--qData[sv->inv.count];
+	// 		// lost connection to the player
+	// 		--qData[sv->inv.count];
 
-			// leaving critical area
-			sem_post(my_sem);
+	// 		// leaving critical area
+	// 		sem_post(my_sem);
 
-			// informing the server side that a player disconnected
-			printf("\t| Player > %s < left room %d |\n", name, getppid());
+	// 		// informing the server side that a player disconnected
+	// 		printf("\t| Player > %s < left room %d |\n", name, getppid());
 
-			// exiting this process
-			exit(0);
-		}
+	// 		// exiting this process
+	// 		exit(0);
+		// }
 	} // for
-	
-	// exiting with success status after closing up the room
-	exit(0);
+		
+	// terminating the current thread
+	// returning to the main one
+	pthread_exit(NULL);
+
+}
+
+void *playerHandler(void *arg) {
+			PlayerData *pd = (PlayerData *)arg;
+
+			++playerCount;
+			int test = 1;
+
+			if (playerCount == pd->sv->s.players) {
+				write(pd->lastPlayer[1], &test, sizeof(test));
+			}
+
+			// terminating the current thread
+			// returning to the main one
+			return NULL;
 }
 
 /*- ---------------------------------------------------------------- -*/
@@ -384,7 +404,7 @@ void openGameRoom(int *fd, ServerVars *sv) {
  * the full flag
  *
  */
-void servePlayer(int connfd, int *qData, ServerVars *sv, char **name, 
+void servePlayer(int connfd, int *qData, ServerVars *sv, char **name,
 	int *fullFlag, int full) {
 	// player vars
 	char plStr[pSize];			// player's inventory in chars
@@ -595,78 +615,6 @@ void pushMessage(int *plPipe, int *sockArray, int *qData, int plCountPos) {
 	sem_post(my_sem);
 }
 
-/*- ---------------------------------------------------------------- -*/
-/**
- * @brief Creates a shared memory segment the size of our inventory
- * struct, with a key that depends on the rooms opened. This way we
- * can achive a dynamic shared memory allocator so that each room
- * gets its own segment to write on
- *
- * @param Takes in the number of rooms opened, the inventory struct 
- * and a pointer to the beginning of the segment
- *
- */
-int openSharedMem(Inventory *inv, int **data) {
-	int shmid;
-	key_t key;
-	size_t shmsize = sizeof(int)*(inv->count+1);
-	int *start;
-	int i;
-
-	// naming our shared memory
-	key = SHM_KEY + roomsOpened;
-
-	// creating the memory segment
-	if ((shmid = shmget(key, shmsize, IPC_CREAT | 0666)) < 0) {
-		perror("shmget error");
-		exit(1);
-	}
-
-
-	// attaching segment to our data space
-	if ((*data = shmat(shmid, NULL, 0)) == (int *)-1) {
-		perror("shmat error");
-		exit(1);
-	}
-
-	// adding data to the segment
-	start = *data;
-	
-	// we are only attaching the quantity data to save some space
-	// since we already have the rest of the data in our struct
-	for (i=0; i<inv->count; ++i) {
-		*start = inv->quantity[i];
-		++start;
-	}
-
-	// last int in the shared memory stands for the player counter
-	*start = 0;
-
-	// returning the id so that we can remove the shared memory later on
-	return shmid;
-}
-
-/*- ---------------------------------------------------------------- -*/
-/**
- * @brief Releases the shared memory segment we reserved
- *
- * @param Takes in the shared memory id
- *
- */
-void closeSharedMem(int shmid) {
-	// returns the key after shmctl
-	key_t ret;
-
-	// attempting to delete the shared memory segment based on its id
-	if ((ret = shmctl(shmid, IPC_RMID, (struct shmid_ds *) NULL)) == -1) {
-		perror("shmctl error");
-		exit(1);
-	}
-
-	// setting the variable that used to hold 
-	// the shared memory id to error status
-	shmid = MYERRCODE;
-}
 
 /*- ---------------------------------------------------------------- -*/
 /**
@@ -680,12 +628,6 @@ void catch_sig(int signo) {
 
 	pid_t pid;
 	int stat;
-
-	// if this child is a game server and has died we remove
-	// its dedicated shared memory (if it exists)
-	if ( !(shmid == MYERRCODE) && !(rprocID == MYERRCODE) ) {
-		closeSharedMem(shmid);
-	}
 
 	// ensuring that all children processes have died
 	while( (pid = waitpid(-1, &stat, WNOHANG)) > 0 ) {
@@ -702,14 +644,6 @@ void catch_sig(int signo) {
  */
 void catch_int(int signo) {
 	(void) signo;	// unused
-
-	// if this child is a game server and has died we remove
-	// its dedicated shared memory (because we received a sigint)
-	// the last open segment is still open
-	if ( !(shmid == MYERRCODE) && !(rprocID == MYERRCODE) ) {
-		closeSharedMem(shmid);
-	}
-
 
 	if (pprocID == getppid()) {
 		// goodbye message
