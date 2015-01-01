@@ -27,20 +27,24 @@ typedef struct {
 
 typedef struct {
 	// connected socket
-	int pconnfd;
+	int *pconnfd;
 
 	// player's name
 	char *name;
 
-	// pipe to contact the room thread
-	int lastPlayer[2];
+	// player counter
+	int *pCount;
 
-	// checking if the server flagged us
-	// as the last request
-	int *full;
+	// pipe to contact the room thread
+	int *lastPlayer;
 
 	// pointer to the server vars
 	ServerVars *sv;
+
+	// give the player the mutex
+	// to lock when in critical
+	// sections
+	pthread_mutex_t *lock;
 } PlayerData;
 
 

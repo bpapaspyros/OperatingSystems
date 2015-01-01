@@ -23,7 +23,6 @@
 
 sem_t *my_sem = NULL;		// declaring a semaphore variable
 int roomsOpened = 0; 		// room counter
-int	playerCount = 0;
 
 pid_t pprocID = MYERRCODE;	// main process's id 
 pid_t rprocID = MYERRCODE;	// only game rooms should store their pid here
@@ -43,9 +42,11 @@ void serverUp(ServerVars *sv);
 // opens a smaller server acting as the game room
 void *openGameRoom(void *arg);
 
+// Callback function. Called to initialize a player's serving
+void *playerHandler(void *arg);
+
 // opens another server that handles his player's requests
-void servePlayer(int connfd, int *qData, ServerVars *sv, char **name,
-	int *fullFlag, int full);
+void servePlayer(PlayerData *pd);
 
 // gets a single player's messages and sends it to the game room server
 void chat(int connfd, int *plPipe, char *name);
@@ -53,23 +54,11 @@ void chat(int connfd, int *plPipe, char *name);
 // game room handles pushing messages to all the players
 void pushMessage(int *plPipe, int *sockArray, int *qData, int players);
 
-	/*- ------- Function declarations ------- -*/ 
-void *playerHandler(void *arg);
-
 int roomAlloc(pthread_t **pArray);
+	/*- ------- Function declarations ------- -*/ 
 
-int roomAlloc(pthread_t **pArray) {
-	// reserving space for at least on thread
-	(*pArray) = realloc( (*pArray), sizeof(pthread_t)*(roomsOpened+1) );
 
-	// checking if the allocation was successfull
-	if ((*pArray) == NULL) {
-		perror("Couldn't allocate memory for the room");
-		return -1;
-	}
 
-	return 0;
-}
 
 
 /*- ---------------------------------------------------------------- -*/
@@ -145,13 +134,18 @@ void initServer(int *listenfd, struct sockaddr_in *servaddr) {
 	listen(*listenfd, LISTENQ); 
 }
 
-
+/*- ---------------------------------------------------------------- -*/
+/**
+ * @brief Main Server openinng threads (game rooms) when needed 
+ *
+ * @param Takes a ServerVars * struct that holds all the info about
+ * the server address and ports plus the inventory structs
+ *
+ */
 void serverUp(ServerVars *sv) {
 
 	// thread array (one thread per room)
 	pthread_t *pArray = NULL;
-	// pthread_t pArray[20];
-
 
 	// thread creation status
 	int tstat = -1;
@@ -167,6 +161,14 @@ void serverUp(ServerVars *sv) {
 
 	// Printing the parent pid
 	printf("\n\n| Main Server pid: %d |\n", pprocID);
+
+	// keeping a backup of the initial quantity values
+	int *backupQ = backupQuantity(sv->inv); 
+
+	if (backupQ == NULL) {
+		perror("Ran out of space");
+		exit(1);
+	}
 
 	// infinite loop, here we handle requests
 	for (;;) {
@@ -200,26 +202,49 @@ void serverUp(ServerVars *sv) {
 				perror("Couldn't read from the game server");
 				exit(1);		
 			}
+
+			// resetting the quantity array
+			copyQuantity(&(sv->inv), backupQ);
 		}
 	
 	} // for
 }
 
-
+/*- ---------------------------------------------------------------- -*/
+/**
+ * @brief Callback function for the game room thread. It accepts players
+ * before assigning them into a new thread. When the room is full this
+ * function starts the message pushing function 
+ *
+ * @param Takes a void * that is casted into ServerVars *
+ *
+ * @return Returns NULL
+ */
 void *openGameRoom(void *arg) {
 	// casting the argument to ServerVars
 	ServerVars *sv = (ServerVars *)arg;
 
-	// struct for the player data
-	PlayerData pd;
+	// array of structs for the player data
+	// on for each player
+	PlayerData pd[sv->s.players];
 
-		// getting the sv struct to the pd for the player
-	pd.sv = sv;
+	// player counter for the room
+	int playerCount = 0;
 
 	// thread array, we will assign one thread
 	// per player. That way we can server many
 	// clients at the same time
 	pthread_t playerThread[sv->s.players];
+
+	// creating a room specific mutex
+	pthread_mutex_t lock;
+
+	// initializing the mutex
+    if (pthread_mutex_init(&lock, NULL) != 0)
+    {
+        perror("Mutex failed\n");
+        exit(1);
+    }
 
 	// thread creation status
 	int tstat = -1;
@@ -237,11 +262,9 @@ void *openGameRoom(void *arg) {
 	int needroom = 0;
 	int full = 0;
 
-	// resetting the player counter
-	playerCount = 0;
-
 	// creating a pipe with the player thread
-	pipe(pd.lastPlayer);
+	int lastPlayer[2];
+	pipe(lastPlayer);
 
 	// socket array
 	int *sockArray = malloc(sizeof(int)*(sv->s.players));
@@ -273,18 +296,37 @@ void *openGameRoom(void *arg) {
 
 			// if we need one more player, then we set the server to
 			// blocking as we want to filter the last request
-			if ( playerCount == sv->s.players - 1) {
+			if ( playerCount == sv->s.players - 1 ) {
 				++full;	// server might be full with the client we accepted
 			}
 
 			// keeping the sockets
 			sockArray[playerCount] = connfd;
+			
+			// pack data for the player
+				// connfd
+			pd[playerCount].pconnfd = &connfd;
+			
+				// getting the sv struct to the pd for the player
+			pd[playerCount].sv = sv;
+
+				// keeping a pointer to the player counter
+			pd[playerCount].pCount = &playerCount;
+
+				// giving the mutex to the player
+			pd[playerCount].lock = &lock;
+
+				// giving him acces to the pipe
+			pd[playerCount].lastPlayer = lastPlayer;
 
 			// creating the thread that will serve this request
 			tstat = pthread_create(&playerThread[playerCount], NULL, playerHandler, &pd);
 
-			// join the thread with this process termination
-			pthread_join(playerThread[playerCount], NULL);
+			// checking if thread was successfully created
+			if (tstat != 0) {
+				perror("Couldn't create thread");
+				exit(1);
+			}			
 			
 			// if we raised the full flag because we suspected the room 
 			// will be full after this client and this is the game server
@@ -292,7 +334,9 @@ void *openGameRoom(void *arg) {
 			if (full) {
 				// then we wait confirmation wheter or not the last
 				// spot was taken
-				read(pd.lastPlayer[0], &full, sizeof(full));
+				read(lastPlayer[0], &full, sizeof(full));
+
+				printf("ok\n");
 
 				// if it was indeed taken, we give the go 
 				// for a new room by entering the main loop
@@ -313,17 +357,11 @@ void *openGameRoom(void *arg) {
 				exit(1);		
 			}
 
-	// 		// informing the server side that the game started
-	// 		printf("| Room %d: Game in progress ...|\n", getpid());
+			// informing the server side that the game started
+			printf("| Room %d: Game in progress ...|\n", getpid());
 
 	// 		// pushing messages from the child servers to the players
 	// 		pushMessage(plPipe, sockArray, qData, sv->inv.count);
-
-	// 		// detaching the room from the shared memory
-	// 		shmdt(qData);
-
-	// 		// marking the shared memory segment for deletion
-	// 		closeSharedMem(shmid);
 			
 	// 		// informing the server side that this game ended
 	// 		printf("| Room %d: Game ended ...|\n", getpid());
@@ -338,19 +376,13 @@ void *openGameRoom(void *arg) {
 	// 		// closing up the listening socket
 	// 		close(sv->listenfd);	
 
-	// 		// setting an alarm for this player
-	// 		// if he doesn't stop it then we kick him
-	// 		alarm(WAIT);
 
 	// 		// resetting the copied pid to error status
 	// 		// so that we can tell these processes apart
 	// 		rprocID = MYERRCODE;
 
-	// 		// initiate contact with the player
-	// 		servePlayer(connfd, qData, sv, &name, fullFlag, full);
 
-	// 		// stopping the alarm
-	// 		alarm(0);
+
 
 	// 		// connecting the player to the chat
 	// 		chat(connfd, plPipe, name);
@@ -366,31 +398,43 @@ void *openGameRoom(void *arg) {
 
 	// 		// informing the server side that a player disconnected
 	// 		printf("\t| Player > %s < left room %d |\n", name, getppid());
-
-	// 		// exiting this process
-	// 		exit(0);
 		// }
 	} // for
 		
 	// terminating the current thread
-	// returning to the main one
 	pthread_exit(NULL);
 
 }
 
+/*- ---------------------------------------------------------------- -*/
+/**
+ * @brief Callback function for the threads that will serve 
+ * incoming players
+ *
+ * @param Takes in a void * argument, that in our case is a
+ * PlayerData struct 
+ *
+ * @return returns NULL
+ */
 void *playerHandler(void *arg) {
-			PlayerData *pd = (PlayerData *)arg;
+	// casting the parameter to PlayerData *
+	PlayerData *pd = (PlayerData *)arg;
 
-			++playerCount;
-			int test = 1;
+	// setting an alarm for this player
+	// if he doesn't stop it then we kick him
+	alarm(WAIT);
 
-			if (playerCount == pd->sv->s.players) {
-				write(pd->lastPlayer[1], &test, sizeof(test));
-			}
+	// initiate contact with the player
+	servePlayer(pd);
+	
+	// stopping the alarm
+	alarm(0);
 
-			// terminating the current thread
-			// returning to the main one
-			return NULL;
+	// free-ing heap allocated memory
+	free(pd->name);
+
+	// terminating the current thread
+	pthread_exit(NULL);
 }
 
 /*- ---------------------------------------------------------------- -*/
@@ -398,85 +442,98 @@ void *playerHandler(void *arg) {
  * @brief Makes contact with the player and serves him depending on his
  * inventory. 
  *
- * @param Takes in the connection socket, the shared memory pointer,
- * the ServerVars struct containing the inventory, settings and 
- * listening socket vars the player's name, the parent pipe and 
- * the full flag
+ * @param Takes the PlayerData struct holding all necessairay variables
+ * about the connection and the server 
  *
  */
-void servePlayer(int connfd, int *qData, ServerVars *sv, char **name,
-	int *fullFlag, int full) {
+void servePlayer(PlayerData *pd) {
 	// player vars
-	char plStr[pSize];			// player's inventory in chars
+	char plStr[pSize];		// player's inventory in chars
 	Inventory plInv;			// player's inventory in our struct
 	char response[LINE_LEN];	// response to the player
 	int status = 0;				// request status (valid/invalid)
+	int full;					// flag for the game's last spot
 
 	// waiting for the player to send us his inventory
-	if (read(connfd, plStr, sizeof(plStr)) < 0) {
+	if (read(*(pd->pconnfd), plStr, sizeof(char)*pSize) < 0) {
 		perror("Error reading the player's inventory");
 		exit(1);
 	}
 
 	// parsing the string we received to our Inventory format
-	parseStrIntoInv(name, plStr, &plInv);
+	parseStrIntoInv(&pd->name, plStr, &plInv);
 
-	// locking the segment (critical section)
-	sem_wait(my_sem);
+	// entering the critical area
+	pthread_mutex_lock(pd->lock);
 
-	// attempting to give items to the player
-	status = subInventories(&sv->inv, plInv, qData, sv->s.quota);
+	// checking if another player beat us to the last slot
+	if (*(pd->pCount) < pd->sv->s.players) {
 
+		// attempting to give items to the player
+		status = subInventories(&(pd->sv->inv), plInv, (pd->sv->s.quota));
+	} else {
+
+		// can't add this player, not enough slots in the room
+		status = 0;
+	}
+	
 	// checking if the subtraction took place
 	if (status) {
 
 		// increasing the player counter
-		++qData[sv->inv.count];
+		++(*(pd->pCount));
 
-		// unlocking the segment (out of the critical section)
-		sem_post(my_sem);
+		// leaving the critical area
+		pthread_mutex_unlock(pd->lock);
 
 		// informing the server side that a player successfully connected
-		printf("| Player > %s < connected |\n", *name);
+		printf("| Player > %s < connected |\n", (pd->name));
 
 		// sending the ok message
 		strcpy(response, "OK\n");	
 	} else {
 
-		// unlocking the segment
-		sem_post(my_sem);
+		// leaving the critical area
+		pthread_mutex_unlock(pd->lock);
 
 		// sending a problem message
 		strcpy(response, "Encoutered a problem");
 	}
 
-	// the game server has raised this flag
-	// meaning this might be the last player
-	if (full) {
-		// if this is indeed the last player
-		if ( qData[sv->inv.count] == sv->s.players) {
-			
-			// we send confirmation to open another room
-			write(fullFlag[1], &full, sizeof(full));
-		} else if (qData[sv->inv.count] == sv->s.players - 1) {
 
-			// otherwise we lower the flag
-			full = 0;
+	// entering the critical area
+	pthread_mutex_lock(pd->lock);
 
-			// and let the game server know
-			write(fullFlag[1], &full, sizeof(full));		
-		}
+	// checking for the last game room spot
+	// if this is indeed the last player
+	if ( *pd->pCount == pd->sv->s.players ) {
+
+		// raising the flag
+		full = 1;
+		
+		// we send confirmation to open another room
+		write(pd->lastPlayer[1], &full, sizeof(full));
+	} else if ( *pd->pCount == pd->sv->s.players ) {
+
+		// otherwise we lower the flag
+		full = 0;
+
+		// and let the game server know
+		write(pd->lastPlayer[1], &full, sizeof(full));		
 	}
 
+	// leaving the critical area
+	pthread_mutex_unlock(pd->lock);
+
 	// writing the response back to the player
-	if (write(connfd, response, sizeof(response)) < 0) {
+	if (write(*pd->pconnfd, response, sizeof(response)) < 0) {
 		perror("Couldn't respond to the player");
 		exit(1);
 	}
 
 	if (!status) {
 		// invalid request
-		exit(0);
+		pthread_exit(NULL);
 	}
 
 	// free data before returning
@@ -615,6 +672,26 @@ void pushMessage(int *plPipe, int *sockArray, int *qData, int plCountPos) {
 	sem_post(my_sem);
 }
 
+/*- ---------------------------------------------------------------- -*/
+/**
+ * @brief Allocates additional space for one more pthread variable
+ *
+ * @param Takes in a double pointer to a pthread array 
+ *
+ * @return Returns 0 on success otherwise -1
+ */
+int roomAlloc(pthread_t **pArray) {
+	// reserving space for at least on thread
+	(*pArray) = realloc( (*pArray), sizeof(pthread_t)*(roomsOpened+1) );
+
+	// checking if the allocation was successfull
+	if ((*pArray) == NULL) {
+		perror("Couldn't allocate memory for the room");
+		return -1;
+	}
+
+	return 0;
+}
 
 /*- ---------------------------------------------------------------- -*/
 /**

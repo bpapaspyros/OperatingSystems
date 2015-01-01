@@ -378,7 +378,7 @@ int checkForDuplicates(Inventory inv) {
  *
  * @return 1 if subtraction took place or 0 if a problem occured
  */
-int subInventories(Inventory *room, Inventory player, int *qData, int quota) {
+int subInventories(Inventory *room, Inventory player, int quota) {
 	int i;			// for counter
 	int pos = -1;	// position of the matched item
 	int posArray[(player.count)];	// an array of indexes
@@ -398,7 +398,7 @@ int subInventories(Inventory *room, Inventory player, int *qData, int quota) {
 			return 0;	// item was not found
 		} else {
 			// last check concerning the remaining quantity
-			if ( (qData[pos]-player.quantity[i]) >= 0 ) {
+			if ( (room->quantity[pos]-player.quantity[i]) >= 0 ) {
 				posArray[i] = pos;
 			} else {
 				return 0;	// asking too much :P
@@ -408,7 +408,7 @@ int subInventories(Inventory *room, Inventory player, int *qData, int quota) {
 
 	// registering the changes since everything went well
 	for (i=0; i<player.count; ++i) {
-			qData[posArray[i]] -= player.quantity[i];
+			room->quantity[posArray[i]] -= player.quantity[i];
 	}
 
 	// all good ...
@@ -417,7 +417,56 @@ int subInventories(Inventory *room, Inventory player, int *qData, int quota) {
 
 /*- ---------------------------------------------------------------- -*/
 /**
- * @brief Prints the info stored in a Inventory struvt
+ * @brief Copies the quantity array of an inventory struct 
+ * to a new one.
+ *
+ * @param Takes in an inventory struct
+ *
+ * @return Returns the copied array 
+ */
+int *backupQuantity(Inventory inv) {
+	int i;	// for counter
+
+	// declaring an array the size of items
+	// allocating from heap
+	int *copy = NULL;
+
+	copy = realloc(copy, sizeof(int)*inv.count);
+
+	if (copy == NULL) {
+		return NULL;	// couldn't allocate space
+	}
+
+	// copying the inventory quantities to the new array
+	for (i=0; i<inv.count; ++i) {
+		copy[i] = inv.quantity[i];
+	}
+
+	// return the copied array
+	return copy;
+
+}
+
+/*- ---------------------------------------------------------------- -*/
+/**
+ * @brief Copies the elements of qArray to the quantity array
+ * of the inventory struct
+ *
+ * @param Takes in an inventory struct, and an array containing 
+ * quantities for the items
+ */
+void copyQuantity(Inventory *inv, int *qArray) {
+	int i;	// for counter
+
+	// actual copying ...
+	for(i=0; i<inv->count; ++i) {
+		inv->quantity[i] = qArray[i];
+	}
+}
+
+/*- ---------------------------------------------------------------- -*/
+/**
+ * @brief Prints the info stored in a Inventory struct
  *
  * @param Takes in an inventory struct
  */
