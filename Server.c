@@ -46,20 +46,17 @@ void *openGameRoom(void *arg);
 void *playerHandler(void *arg);
 
 // opens another server that handles his player's requests
-void servePlayer(PlayerData *pd);
+void servePlayer(char **name, PlayerData *pd);
 
 // gets a single player's messages and sends it to the game room server
 void chat(int connfd, int *plPipe, char *name);
 
 // game room handles pushing messages to all the players
-void pushMessage(int *plPipe, int *sockArray, int *qData, int players);
+void pushMessage(int *plPipe, int *sockArray, PlayerData *pd);
 
+// allocates memory for an additional pthread
 int roomAlloc(pthread_t **pArray);
 	/*- ------- Function declarations ------- -*/ 
-
-
-
-
 
 /*- ---------------------------------------------------------------- -*/
 // 				Function definitions 
@@ -336,8 +333,6 @@ void *openGameRoom(void *arg) {
 				// spot was taken
 				read(lastPlayer[0], &full, sizeof(full));
 
-				printf("ok\n");
-
 				// if it was indeed taken, we give the go 
 				// for a new room by entering the main loop
 				if (full) {
@@ -360,45 +355,15 @@ void *openGameRoom(void *arg) {
 			// informing the server side that the game started
 			printf("| Room %d: Game in progress ...|\n", getpid());
 
-	// 		// pushing messages from the child servers to the players
-	// 		pushMessage(plPipe, sockArray, qData, sv->inv.count);
+			// pushing messages from the child servers to the players
+			pushMessage(lastPlayer, sockArray, &pd[0]);
 			
-	// 		// informing the server side that this game ended
-	// 		printf("| Room %d: Game ended ...|\n", getpid());
+			// informing the server side that this game ended
+			printf("| Room %d: Game ended ...|\n", getpid());
 
 			// breaking out of the loop
 			break;
 		}
-
-	// 	// the child process handles the request
-	// 	if (newpid == 0) {
-
-	// 		// closing up the listening socket
-	// 		close(sv->listenfd);	
-
-
-	// 		// resetting the copied pid to error status
-	// 		// so that we can tell these processes apart
-	// 		rprocID = MYERRCODE;
-
-
-
-
-	// 		// connecting the player to the chat
-	// 		chat(connfd, plPipe, name);
-
-	// 		// entering critical area
-	// 		sem_wait(my_sem);
-
-	// 		// lost connection to the player
-	// 		--qData[sv->inv.count];
-
-	// 		// leaving critical area
-	// 		sem_post(my_sem);
-
-	// 		// informing the server side that a player disconnected
-	// 		printf("\t| Player > %s < left room %d |\n", name, getppid());
-		// }
 	} // for
 		
 	// terminating the current thread
@@ -420,18 +385,38 @@ void *playerHandler(void *arg) {
 	// casting the parameter to PlayerData *
 	PlayerData *pd = (PlayerData *)arg;
 
+	// player name
+	char *name = NULL;
+
 	// setting an alarm for this player
 	// if he doesn't stop it then we kick him
 	alarm(WAIT);
 
 	// initiate contact with the player
-	servePlayer(pd);
+	servePlayer(&name, pd);
 	
 	// stopping the alarm
 	alarm(0);
 
+	// connecting this thread to the chat
+	chat(*pd->pconnfd, pd->lastPlayer, name);
+
+	// entering the critical area
+	pthread_mutex_lock(pd->lock);
+
+	// updating the counter that a player left
+	--(*(pd->pCount));
+
+	// leaving the critical area
+	pthread_mutex_unlock(pd->lock);
+
+	*pd->pconnfd = MYERRCODE;
+
+	// informing the server side that a player disconnected
+	printf("\t| Player > %s < left room %d |\n", name, getppid());
+
 	// free-ing heap allocated memory
-	free(pd->name);
+	free(name);
 
 	// terminating the current thread
 	pthread_exit(NULL);
@@ -443,12 +428,12 @@ void *playerHandler(void *arg) {
  * inventory. 
  *
  * @param Takes the PlayerData struct holding all necessairay variables
- * about the connection and the server 
+ * about the connection and the server and the playr's name
  *
  */
-void servePlayer(PlayerData *pd) {
+void servePlayer(char **name, PlayerData *pd) {
 	// player vars
-	char plStr[pSize];		// player's inventory in chars
+	char plStr[pSize];			// player's inventory in chars
 	Inventory plInv;			// player's inventory in our struct
 	char response[LINE_LEN];	// response to the player
 	int status = 0;				// request status (valid/invalid)
@@ -461,7 +446,7 @@ void servePlayer(PlayerData *pd) {
 	}
 
 	// parsing the string we received to our Inventory format
-	parseStrIntoInv(&pd->name, plStr, &plInv);
+	parseStrIntoInv(name, plStr, &plInv);
 
 	// entering the critical area
 	pthread_mutex_lock(pd->lock);
@@ -487,7 +472,7 @@ void servePlayer(PlayerData *pd) {
 		pthread_mutex_unlock(pd->lock);
 
 		// informing the server side that a player successfully connected
-		printf("| Player > %s < connected |\n", (pd->name));
+		printf("| Player > %s < connected |\n", *name);
 
 		// sending the ok message
 		strcpy(response, "OK\n");	
@@ -619,7 +604,7 @@ void chat(int connfd, int *plPipe, char *name) {
  * an index to the player counter for the shared memory pointer
  *
  */
-void pushMessage(int *plPipe, int *sockArray, int *qData, int plCountPos) {
+void pushMessage(int *plPipe, int *sockArray, PlayerData *pd) {
 	char message[pSize];	// message that we have to push	
 	int senderSocket = -1;	// used to identify the sender's socket to avoid duplicate message
 	int i;					// for counter
@@ -628,7 +613,7 @@ void pushMessage(int *plPipe, int *sockArray, int *qData, int plCountPos) {
 	strcpy(message, "START\n");
 
 	// sending the game start message to the players
-	for (i=0; i<qData[plCountPos]; ++i) {
+	for (i=0; i<*pd->pCount; ++i) {
 		// attempting to write the message to the clients
 		if (write(sockArray[i], message, sizeof(message)) < 0) {							
 			perror("Couldn't write START");
@@ -637,9 +622,9 @@ void pushMessage(int *plPipe, int *sockArray, int *qData, int plCountPos) {
 	} 
 
 	// pushing until all players leave the room
-	sem_wait(my_sem);		// entering critical area
-	while (qData[plCountPos] > 0) {
-		sem_post(my_sem);	// exiting critical area
+	pthread_mutex_lock(pd->lock);	// entering critical area
+	while (*pd->pCount > 0) {
+	pthread_mutex_unlock(pd->lock);	// leaving critical area
 
 		// attempting to read the sender's socket
 		read(plPipe[0], &senderSocket, sizeof(senderSocket));
@@ -654,9 +639,9 @@ void pushMessage(int *plPipe, int *sockArray, int *qData, int plCountPos) {
 			perror("Error pushing message");
 		} else {				
 			// iterating through the open sockets to push the message
-			for (i=0; i<qData[plCountPos]; ++i) {
+			for (i=0; i<pd->sv->s.players; ++i) {
 				// this was the sender so we don't push the message
-				if (sockArray[i] == senderSocket) {
+				if (sockArray[i] == senderSocket || sockArray[i] == MYERRCODE) {
 					continue;
 				}
 
@@ -668,8 +653,8 @@ void pushMessage(int *plPipe, int *sockArray, int *qData, int plCountPos) {
 		}
 	} // while 
 	
-	// exiting critical area
-	sem_post(my_sem);
+	// // exiting critical area
+	// sem_post(my_sem);
 }
 
 /*- ---------------------------------------------------------------- -*/
@@ -722,7 +707,7 @@ void catch_sig(int signo) {
 void catch_int(int signo) {
 	(void) signo;	// unused
 
-	if (pprocID == getppid()) {
+	if (pprocID == getpid()) {
 		// goodbye message
 		printf("\n\n\t\t Server terminated with SIGINT ... GoodBye ! \n\n");	
 	}

@@ -176,11 +176,11 @@ void clientUp(int sockfd, struct sockaddr_in *servaddr, cSettings set, Inventory
 	// stopping the alarm
 	alarm(0);
 
-	// // removing the handler
-	// signal(SIGALRM, SIG_IGN);
+	// removing the handler
+	signal(SIGALRM, SIG_IGN);
 
 	// // opening the chat
-	// initChat(sockfd);
+	initChat(sockfd);
 
 	// close the connected socket
 	close(sockfd);

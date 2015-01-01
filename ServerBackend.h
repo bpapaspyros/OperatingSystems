@@ -29,9 +29,6 @@ typedef struct {
 	// connected socket
 	int *pconnfd;
 
-	// player's name
-	char *name;
-
 	// player counter
 	int *pCount;
 
