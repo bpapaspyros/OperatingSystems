@@ -35,6 +35,9 @@ typedef struct {
 	// pipe to contact the room thread
 	int *lastPlayer;
 
+	// chat pipes
+	int **chatPipes;
+
 	// pointer to the server vars
 	ServerVars *sv;
 
@@ -43,7 +46,6 @@ typedef struct {
 	// sections
 	pthread_mutex_t *lock;
 } PlayerData;
-
 
 /*- ---------------------------------------------------------------- -*/
 /**

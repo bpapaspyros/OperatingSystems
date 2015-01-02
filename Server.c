@@ -49,7 +49,7 @@ void *playerHandler(void *arg);
 void servePlayer(char **name, PlayerData *pd);
 
 // gets a single player's messages and sends it to the game room server
-void chat(int connfd, int *plPipe, char *name);
+int chat(int connfd, int *plPipe, char *name, PlayerData *pd);
 
 // game room handles pushing messages to all the players
 void pushMessage(int *plPipe, int *sockArray, PlayerData *pd);
@@ -399,7 +399,7 @@ void *playerHandler(void *arg) {
 	alarm(0);
 
 	// connecting this thread to the chat
-	chat(*pd->pconnfd, pd->lastPlayer, name);
+	chat(*pd->pconnfd, pd->lastPlayer, name, pd);
 
 	// entering the critical area
 	pthread_mutex_lock(pd->lock);
@@ -535,7 +535,7 @@ void servePlayer(char **name, PlayerData *pd) {
  * and the player's name to attach to his messages
  *
  */
-void chat(int connfd, int *plPipe, char *name) {
+int chat(int connfd, int *plPipe, char *name, PlayerData *pd) {
 	// this end of the pipe to send messages
 	int fd2 = plPipe[1];
 
@@ -549,6 +549,29 @@ void chat(int connfd, int *plPipe, char *name) {
 	fd_set read_set;
 	fd_set write_set;
 
+	// until everyone is connected tell the player to wait
+	strcpy(message, "Waiting for more players ...\n");
+
+	// waiting for other players
+	pthread_mutex_lock(pd->lock);	// entering critical area
+	while (*pd->pCount != pd->sv->s.players) {
+		pthread_mutex_unlock(pd->lock);	// leaving critical area
+		if (write(connfd, message, sizeof(message)) <= 0) {
+			return 1;
+		}
+
+		// sleep for 5
+		sleep(5);
+	}
+	pthread_mutex_unlock(pd->lock);	// leaving critical area
+
+	// letting the player know the game is starting
+	strcpy(message, "START\n");
+	if (write(connfd, message, sizeof(message)) <= 0) {
+		return 1;
+	}
+
+	// pushing until all players leave the room
 	while (1) {
 		// zeroing the read and write fs sets
 		FD_ZERO(&read_set);
@@ -580,11 +603,11 @@ void chat(int connfd, int *plPipe, char *name) {
 						write(fd2, message, sizeof(message));
 					} 
 				} else {
+					// closing this socket
+					close(connfd);
+
 					// set the connfd to a custom error code
 					connfd = MYERRCODE;
-
-					// write this code back to the game server
-					write(fd2, &connfd, sizeof(connfd));
 
 					// lost connection to the player, so we exit the chat
 					break;
@@ -592,6 +615,8 @@ void chat(int connfd, int *plPipe, char *name) {
 			} // connfd is set 
 		} // select
 	} // while
+
+	return 0;
 }
 
 /*- ---------------------------------------------------------------- -*/
@@ -609,30 +634,18 @@ void pushMessage(int *plPipe, int *sockArray, PlayerData *pd) {
 	int senderSocket = -1;	// used to identify the sender's socket to avoid duplicate message
 	int i;					// for counter
 
-	// first message to send is START
-	strcpy(message, "START\n");
-
-	// sending the game start message to the players
-	for (i=0; i<*pd->pCount; ++i) {
-		// attempting to write the message to the clients
-		if (write(sockArray[i], message, sizeof(message)) < 0) {							
-			perror("Couldn't write START");
-			exit(1);
-		}
-	} 
-
 	// pushing until all players leave the room
 	pthread_mutex_lock(pd->lock);	// entering critical area
 	while (*pd->pCount > 0) {
-	pthread_mutex_unlock(pd->lock);	// leaving critical area
+		pthread_mutex_unlock(pd->lock);	// leaving critical area
 
 		// attempting to read the sender's socket
 		read(plPipe[0], &senderSocket, sizeof(senderSocket));
 
 		// received an error code, which means the player left
-		if (senderSocket == MYERRCODE) {
-			continue;
-		}
+		// if (senderSocket == MYERRCODE) {
+		// 	continue;
+		// }
 
 		// attempting to get the message from the child server
 		if (read(plPipe[0], message, sizeof(message)) < 0) {
@@ -641,20 +654,17 @@ void pushMessage(int *plPipe, int *sockArray, PlayerData *pd) {
 			// iterating through the open sockets to push the message
 			for (i=0; i<pd->sv->s.players; ++i) {
 				// this was the sender so we don't push the message
-				if (sockArray[i] == senderSocket || sockArray[i] == MYERRCODE) {
+				if (sockArray[i] == senderSocket) {
 					continue;
 				}
 
 				// attempting to write the message to the clients
-				if (write(sockArray[i], message, sizeof(message)) < 0) {							
-					perror("Error pushing message 2");
+				if (write(sockArray[i], message, sizeof(message)) <= 0) {							
+					continue;
 				}
 			} // for
 		}
 	} // while 
-	
-	// // exiting critical area
-	// sem_post(my_sem);
 }
 
 /*- ---------------------------------------------------------------- -*/
