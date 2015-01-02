@@ -232,29 +232,12 @@ void *playerRead(void *args) {
 	// declaring a buffer for reading
 	char msg[pSize];
 
-	// setting the alarm to another handler
-	signal(SIGALRM, catch_alarm);
-
-	// setting the alarm to go off every 5 seconds
-	alarm(5);
-
-	// waiting for the START message
-	if (read(*sockfd, msg, sizeof(msg)) < 0) {
-		perror("Error getting the server's response");
-		exit(1);
-	}	
-
-	// got the START message and we stop the timer
-	alarm(0);
-
-	// print the message
-	printf("%s\n", msg);
-
 	// while connection is good
 	while (1) {
 		// get the message
-		if (read(*sockfd, msg, sizeof(msg)) < 0) {
+		if (read(*sockfd, msg, sizeof(msg)) <= 0) {
 			perror("Error getting the server's response");
+			close(*sockfd);
 			exit(1);
 		}	
 
@@ -295,8 +278,9 @@ void *playerWrite(void *args) {
 		msg[count] = '\0';
 
 		// writing the string to the server
-		if (write(*sockfd, msg, sizeof(msg)) < 0) {
-			perror("Error while sending the inventory");
+		if (write(*sockfd, msg, sizeof(msg)) <= 0) {
+			perror("Error sending the message");
+			close(*sockfd);
 			exit(1);
 		}
 

@@ -21,6 +21,15 @@ typedef struct {
 	int listenfd; 
 } ServerVars;
 
+typedef struct {
+	int connfd;
+
+	int *chatPipe;
+
+	char *name;
+
+} ChatData;
+
 
 /*- ---------------------------------------------------------------- -*/
 /**

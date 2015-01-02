@@ -47,10 +47,11 @@ void servePlayer(int connfd, int *qData, ServerVars *sv, char **name,
 	int *fullFlag, int full);
 
 // gets a single player's messages and sends it to the game room server
-void chat(int connfd, int *plPipe, char *name);
+int chat(int connfd, int *plPipe, char *name, int *qData, 
+	int plCountPos, int players);
 
 // game room handles pushing messages to all the players
-void pushMessage(int *plPipe, int *sockArray, int *qData, int players);
+void pushMessage(int *plPipe, int *sockArray, int *qData, int plCountPos, int players);
 
 // opens a memory segment for ipc
 int openSharedMem(Inventory *inv, int **data);
@@ -314,7 +315,7 @@ void openGameRoom(int *fd, ServerVars *sv) {
 			printf("| Room %d: Game in progress ...|\n", getpid());
 
 			// pushing messages from the child servers to the players
-			pushMessage(plPipe, sockArray, qData, sv->inv.count);
+			pushMessage(plPipe, sockArray, qData, sv->inv.count, sv->s.players);
 
 			// detaching the room from the shared memory
 			shmdt(qData);
@@ -350,7 +351,7 @@ void openGameRoom(int *fd, ServerVars *sv) {
 			alarm(0);
 
 			// connecting the player to the chat
-			chat(connfd, plPipe, name);
+			chat(connfd, plPipe, name, qData, sv->inv.count, sv->s.players);
 
 			// entering critical area
 			sem_wait(my_sem);
@@ -473,7 +474,8 @@ void servePlayer(int connfd, int *qData, ServerVars *sv, char **name,
  * and the player's name to attach to his messages
  *
  */
-void chat(int connfd, int *plPipe, char *name) {
+int chat(int connfd, int *plPipe, char *name, int *qData, 
+	int plCountPos, int players) {
 	// this end of the pipe to send messages
 	int fd2 = plPipe[1];
 
@@ -486,6 +488,28 @@ void chat(int connfd, int *plPipe, char *name) {
 	// read/write fd sets
 	fd_set read_set;
 	fd_set write_set;
+
+	// until everyone is connected tell the player to wait
+	strcpy(message, "Waiting for more players ...\n");
+
+	// waiting for other players
+	sem_wait(my_sem);	// entering critical area
+	while (qData[plCountPos] != players) {
+		sem_post(my_sem);	// leaving critical area
+		if (write(connfd, message, sizeof(message)) <= 0) {
+			return 1;
+		}
+
+		// sleep for 5
+		sleep(5);
+	}
+	sem_post(my_sem);	// leaving critical area
+
+	// letting the player know the game is starting
+	strcpy(message, "START\n");
+	if (write(connfd, message, sizeof(message)) <= 0) {
+		return 1;
+	}
 
 	while (1) {
 		// zeroing the read and write fs sets
@@ -518,18 +542,17 @@ void chat(int connfd, int *plPipe, char *name) {
 						write(fd2, message, sizeof(message));
 					} 
 				} else {
-					// set the connfd to a custom error code
-					connfd = MYERRCODE;
-
-					// write this code back to the game server
-					write(fd2, &connfd, sizeof(connfd));
-
+					// closing this socket
+					close(connfd);
+					
 					// lost connection to the player, so we exit the chat
 					break;
 				}
 			} // connfd is set 
 		} // select
 	} // while
+
+	return 0;
 }
 
 /*- ---------------------------------------------------------------- -*/
@@ -542,22 +565,10 @@ void chat(int connfd, int *plPipe, char *name) {
  * an index to the player counter for the shared memory pointer
  *
  */
-void pushMessage(int *plPipe, int *sockArray, int *qData, int plCountPos) {
+void pushMessage(int *plPipe, int *sockArray, int *qData, int plCountPos, int players) {
 	char message[pSize];	// message that we have to push	
 	int senderSocket = -1;	// used to identify the sender's socket to avoid duplicate message
 	int i;					// for counter
-
-	// first message to send is START
-	strcpy(message, "START\n");
-
-	// sending the game start message to the players
-	for (i=0; i<qData[plCountPos]; ++i) {
-		// attempting to write the message to the clients
-		if (write(sockArray[i], message, sizeof(message)) < 0) {							
-			perror("Couldn't write START");
-			exit(1);
-		}
-	} 
 
 	// pushing until all players leave the room
 	sem_wait(my_sem);		// entering critical area
@@ -567,25 +578,20 @@ void pushMessage(int *plPipe, int *sockArray, int *qData, int plCountPos) {
 		// attempting to read the sender's socket
 		read(plPipe[0], &senderSocket, sizeof(senderSocket));
 
-		// received an error code, which means the player left
-		if (senderSocket == MYERRCODE) {
-			continue;
-		}
-
 		// attempting to get the message from the child server
 		if (read(plPipe[0], message, sizeof(message)) < 0) {
 			perror("Error pushing message");
 		} else {				
 			// iterating through the open sockets to push the message
-			for (i=0; i<qData[plCountPos]; ++i) {
+			for (i=0; i<players; ++i) {
 				// this was the sender so we don't push the message
 				if (sockArray[i] == senderSocket) {
 					continue;
 				}
 
 				// attempting to write the message to the clients
-				if (write(sockArray[i], message, sizeof(message)) < 0) {							
-					perror("Error pushing message 2");
+				if (write(sockArray[i], message, sizeof(message)) <= 0) {							
+					continue;
 				}
 			} // for
 		}
