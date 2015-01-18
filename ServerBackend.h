@@ -9,7 +9,7 @@ typedef struct {
 	char inventory[LINE_LEN];
 }Settings;
 
-	// struct that groups usefull vars
+	// struct that groups useful vars
 typedef struct {
 	// game settings
 	Settings s; 

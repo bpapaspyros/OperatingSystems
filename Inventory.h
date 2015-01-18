@@ -167,7 +167,7 @@ int readInventory(char *filename, Inventory *inv) {
 
 		fclose(fp);	// closing it up
 
-		return 0;	// no error occured
+		return 0;	// no error occurred
 	} else {
 		perror("Inventory problem");
 		return 1;	// file was not found or couldn't open
@@ -297,7 +297,7 @@ void parseStrIntoInv(char **name, char *str, Inventory *outInv) {
  */
 void parseInvIntoStr(char *name, Inventory inv, char *str) {
 	int i; 					// for counter
-	char tab[] = "\t";		// tab seperator
+	char tab[] = "\t";		// tab separator
 	char newline[] = "\n";	// newline
 	char numToS[LINE_LEN];	// number that we will convert to int
 
@@ -340,11 +340,11 @@ int findItem(Inventory inv, char *target, int *index) {
 
 /*- ---------------------------------------------------------------- -*/
 /**
- * @brief Checks for dublicates in the given inventory
+ * @brief Checks for duplicates in the given inventory
  *
  * @param Takes in an inventory struct
  *
- * @return 1 if dublicate was found or 0 if not
+ * @return 1 if duplicate was found or 0 if not
  */
 int checkForDuplicates(Inventory inv) {
 	int i, j;		// for counter
@@ -370,13 +370,13 @@ int checkForDuplicates(Inventory inv) {
 /*- ---------------------------------------------------------------- -*/
 /**
  * @brief Subtracts two given inventories according to the rules of the
- * server. This function checks all necaissary conditions before registering
+ * server. This function checks all necessary conditions before registering
  * the changes to the room's inventory
  *
  * @param Takes in the room's and player's inventories and the max quota
  * set in the beginning
  *
- * @return 1 if subtraction took place or 0 if a problem occured
+ * @return 1 if subtraction took place or 0 if a problem occurred
  */
 int subInventories(Inventory *room, Inventory player, int *qData, int quota) {
 	int i;			// for counter
@@ -417,7 +417,7 @@ int subInventories(Inventory *room, Inventory player, int *qData, int quota) {
 
 /*- ---------------------------------------------------------------- -*/
 /**
- * @brief Prints the info stored in a Inventory struvt
+ * @brief Prints the info stored in a Inventory struct
  *
  * @param Takes in an inventory struct
  */

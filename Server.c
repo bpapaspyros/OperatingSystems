@@ -2,7 +2,7 @@
  * @file Server.c
  * @author Vaios Papaspyros
  * 
- * @brief Implemenation of the game's server
+ * @brief Implementation of the game's server
  *
  * Shared memory allocation, creation of sockets and all the backend
  * functions that are expected from a server are implemented in
@@ -64,7 +64,7 @@ void closeSharedMem(int shmid);
 // 				Function definitions 
 /*- ---------------------------------------------------------------- -*/
 int main(int argc, char **argv) {
-	// compact way to acces usefull vars
+	// compact way to access useful vars
 	ServerVars sv;
 
 	// structs for server address
@@ -132,10 +132,10 @@ void initServer(int *listenfd, struct sockaddr_in *servaddr) {
 	// creating the request queue
 	listen(*listenfd, LISTENQ); 
 
-	// attemting to open the semaphore 
+	// attempting to open the semaphore
 	my_sem = sem_open("sem5623", O_CREAT, 0600, 1);
 
-	// checking if the semahore opened
+	// checking if the semaphore opened
 	if (my_sem == SEM_FAILED) {	
 		printf("Could not open semaphore!\n");
 		exit(1);
@@ -261,7 +261,7 @@ void openGameRoom(int *fd, ServerVars *sv) {
 			// get next request and remove it from queue afterwards
 			connfd = accept(sv->listenfd, (struct sockaddr *)&cliaddr, &clilen);
 
-			// checking if connection was successfull
+			// checking if connection was successful
 			if (connfd < 0) {
 				if (errno == EINTR) {
 					continue;
@@ -288,7 +288,7 @@ void openGameRoom(int *fd, ServerVars *sv) {
 			// not the child
 			if (full && (newpid != 0)) {
 
-				// then we wait confirmation wheter or not the last
+				// then we wait confirmation whether or not the last
 				// spot was taken
 				read(fullFlag[0], &full, sizeof(full));
 
@@ -520,7 +520,7 @@ int chat(int connfd, int *plPipe, char *name, int *qData,
 		FD_SET(connfd, &read_set);	// reading list
 		FD_SET(fd2, &write_set);	// writing list
 
-		// using select to check if the sockest in our list are ready to read/write
+		// using select to check if the socket in our list are ready to read/write
 		if(select(connfd+1, &read_set, &write_set, NULL, NULL) > 0) {
 			// checking if connfd is read to read
 			if (FD_ISSET(connfd, &read_set)) {
@@ -605,7 +605,7 @@ void pushMessage(int *plPipe, int *sockArray, int *qData, int plCountPos, int pl
 /**
  * @brief Creates a shared memory segment the size of our inventory
  * struct, with a key that depends on the rooms opened. This way we
- * can achive a dynamic shared memory allocator so that each room
+ * can achieve a dynamic shared memory allocator so that each room
  * gets its own segment to write on
  *
  * @param Takes in the number of rooms opened, the inventory struct 

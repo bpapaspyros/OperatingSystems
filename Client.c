@@ -2,7 +2,7 @@
  * @file Client.c
  * @author Vaios Papaspyros
  * 
- * @brief Implemenation of the game's client
+ * @brief Implementation of the game's client
  *
  * In this file the player (client) is created. We make contact with
  * the server and get its response concerning the room the player 
@@ -148,7 +148,7 @@ void clientUp(int sockfd, struct sockaddr_in *servaddr, cSettings set, Inventory
 	}
 
 	// waiting for the server to respond on the inventory and 
-	// this player's participationmak
+	// this player's participation
 	if (read(sockfd, response, sizeof(response)) < 0) {
 		perror("Error getting the server's response");
 		exit(1);

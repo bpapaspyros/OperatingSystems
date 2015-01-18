@@ -1,22 +1,21 @@
 # !/bin/bash
 
 
-
 function test1() {
 	# Test 1
 	clear && echo "Test 1 - Lasts about 35 seconds - Try the chat"
 	sleep 2;
 
 	# starting the server
-	(x-terminal-emulator -e timeout --signal=SIGINT 35s ../server "-p" "3" "-q" "4" "-i" "server1.dat") &
+	(xterm -e timeout --signal=SIGINT 35s ../server "-p" "3" "-q" "4" "-i" "server1.dat") &
 
 	# wait for a sec
-	sleep 1;
+	sleep 2;
 
 	# starting 3 clients
-	(x-terminal-emulator -e timeout --signal=SIGINT 30s ../client "-n" "Baios P"   "-i" "client1.dat" "$(hostname)") &
-	(x-terminal-emulator -e timeout --signal=SIGINT 30s ../client "-n" "John Doe"  "-i" "client2.dat" "$(hostname)") &
-	(x-terminal-emulator -e timeout --signal=SIGINT 30s ../client "-n" "Jane Doe"  "-i" "client3.dat" "$(hostname)") &
+	(xterm -e timeout --signal=SIGINT 30s ../client "-n" "Baios P"   "-i" "client1.dat" "$(hostname)") &
+	(xterm -e timeout --signal=SIGINT 30s ../client "-n" "John Doe"  "-i" "client2.dat" "$(hostname)") &
+	(xterm -e timeout --signal=SIGINT 30s ../client "-n" "Jane Doe"  "-i" "client3.dat" "$(hostname)") &
 
 	# wait for test 1 to end
 	sleep 35;
@@ -28,13 +27,13 @@ function test2 {
 	sleep 5;
 
 	# starting the server
-	(x-terminal-emulator -e timeout --signal=SIGINT 10s ../server "-p" "1" "-q" "4" "-i" "server1.dat") &
+	(xterm -e timeout --signal=SIGINT 10s ../server "-p" "1" "-q" "4" "-i" "server1.dat") &
 
 	# wait for a sec
 	sleep 1;
 	for i in {1..10}
 	do 
-		(x-terminal-emulator -e timeout --signal=SIGINT 3s ../client "-n" "$i" "-i" "client1.dat" "$(hostname)") &
+		(xterm -e timeout --signal=SIGINT 3s ../client "-n" "$i" "-i" "client1.dat" "$(hostname)") &
 	done
 
 	sleep 5;
@@ -53,15 +52,15 @@ function test3 {
 	sleep 5;
 
 	# starting the server
-	(x-terminal-emulator -e timeout --signal=SIGINT 40s ../server "-p" "2" "-q" "100" "-i" "server1.dat") &
+	(xterm -e timeout --signal=SIGINT 40s ../server "-p" "2" "-q" "100" "-i" "server1.dat") &
 
 	sleep 1;
 	for i in {1..10}
 	do 
-		(x-terminal-emulator -e timeout --signal=SIGINT 3s ../client "-n" "1" "-i" "client4.dat" "$(hostname)") &
-		(x-terminal-emulator -e timeout --signal=SIGINT 3s ../client "-n" "2" "-i" "client4.dat" "$(hostname)") &
+		(xterm -e timeout --signal=SIGINT 3s ../client "-n" "1" "-i" "client4.dat" "$(hostname)") &
+		(xterm -e timeout --signal=SIGINT 3s ../client "-n" "2" "-i" "client4.dat" "$(hostname)") &
 		
-		(x-terminal-emulator -e timeout --signal=SIGINT 3s ../client "-n" "3" "-i" "client3.dat" "$(hostname)") &
+		(xterm -e timeout --signal=SIGINT 3s ../client "-n" "3" "-i" "client3.dat" "$(hostname)") &
 
 		sleep 1;
 	done
@@ -74,18 +73,19 @@ function test3 {
 # checking if the user wants a specific test
 if [ $# -eq 0 ]
 then
-	# printing instructions
-	clear && echo "Sample tests - From now on keep this terminal on top of the others ..."
-	echo " - Many terminals will flash during this test"
-	echo " - Try to focus a this terminal and the one that is left open"
-	echo " - All terminals will timeout ! No need for you to close them or you might get undefined behaviour"
 
-	echo "Tests start in"
-
+	clear
 	for i in {15..1}
 	do
-		echo "$i"
+		# printing instructions
+		echo "Sample tests - From now on keep this terminal on top of the others ..."
+		echo " - Many terminals will flash during this test"
+		echo " - Try to focus a this terminal and the one that is left open"
+		echo " - All terminals will timeout ! No need for you to close them or you might get undefined behaviour"
+
+		echo "Tests start in $i"
 		sleep 1;
+		clear
 	done
 
 	# calling all the tests
